@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin — Accounts • Assets • Categories</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#0f1620; --panel2:#121c29; --text:#e7edf6; --muted:#a9b7c8;
+      --line:#223044; --accent:#7aa8ff; --danger:#ff6b6b; --ok:#3ddc97; --warn:#ffd166;
+      --shadow: 0 12px 40px rgba(0,0,0,.35);
+      --radius:14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0; font-family:var(--sans); background:linear-gradient(180deg,#070a0f 0%,#0b0f14 45%,#070a0f 100%);
+      color:var(--text);
+    }
+    a{ color:var(--accent); text-decoration:none; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:18px 16px 40px; }
+    .topbar{
+      display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+      padding:12px 14px; border:1px solid var(--line); border-radius:var(--radius); background:rgba(15,22,32,.85);
+      box-shadow:var(--shadow);
+      position:sticky; top:10px; z-index:50; backdrop-filter: blur(10px);
+    }
+    .title{ display:flex; align-items:baseline; gap:10px; }
+    .title h1{ margin:0; font-size:18px; letter-spacing:.2px; }
+    .title .badge{
+      font-size:12px; color:var(--muted); border:1px solid var(--line); padding:2px 8px; border-radius:999px;
+      background:rgba(18,28,41,.8);
+    }
+    .conn{
+      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    }
+    .field{
+      display:flex; flex-direction:column; gap:6px;
+    }
+    .field label{ font-size:12px; color:var(--muted); }
+    input[type="text"], input[type="password"], textarea, select{
+      background:rgba(18,28,41,.9); color:var(--text);
+      border:1px solid var(--line); border-radius:10px; padding:9px 10px; outline:none;
+      min-width: 220px;
+    }
+    textarea{ min-width: 300px; min-height: 90px; resize: vertical; font-family:var(--mono); font-size:12px; line-height:1.35; }
+    input:focus, textarea:focus, select:focus{ border-color:rgba(122,168,255,.8); box-shadow:0 0 0 3px rgba(122,168,255,.15); }
+    .btn{
+      border:1px solid var(--line); background:rgba(18,28,41,.9); color:var(--text);
+      padding:9px 12px; border-radius:10px; cursor:pointer; font-weight:600;
+      display:inline-flex; align-items:center; gap:8px;
+    }
+    .btn:hover{ border-color:rgba(122,168,255,.55); }
+    .btn.primary{ background:rgba(122,168,255,.18); border-color:rgba(122,168,255,.45); }
+    .btn.danger{ background:rgba(255,107,107,.12); border-color:rgba(255,107,107,.35); color:#ffd6d6; }
+    .btn.ghost{ background:transparent; }
+    .btn:disabled{ opacity:.6; cursor:not-allowed; }
+    .tabs{
+      margin-top:14px;
+      display:flex; gap:8px; flex-wrap:wrap;
+    }
+    .tab{
+      padding:9px 12px; border-radius:999px; border:1px solid var(--line); background:rgba(15,22,32,.75);
+      cursor:pointer; color:var(--muted); font-weight:700; letter-spacing:.2px; font-size:13px;
+    }
+    .tab.active{ color:var(--text); border-color:rgba(122,168,255,.55); background:rgba(122,168,255,.12); }
+    .panel{
+      margin-top:12px;
+      border:1px solid var(--line); border-radius:var(--radius);
+      background:rgba(15,22,32,.7); box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .panelHead{
+      display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+      padding:12px 14px; border-bottom:1px solid var(--line); background:rgba(18,28,41,.6);
+    }
+    .panelHead .left{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .panelHead .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .panelHead .hint{ font-size:12px; color:var(--muted); }
+    .searchRow{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .tableWrap{ overflow:auto; }
+    table{ width:100%; border-collapse:collapse; }
+    th, td{ padding:10px 12px; border-bottom:1px solid rgba(34,48,68,.75); vertical-align:top; }
+    th{ text-align:left; font-size:12px; color:var(--muted); letter-spacing:.3px; text-transform:uppercase; }
+    td{ font-size:13px; }
+    .mono{ font-family:var(--mono); font-size:12px; color:var(--muted); }
+    .pill{
+      display:inline-flex; align-items:center; gap:6px;
+      border:1px solid var(--line); background:rgba(18,28,41,.7);
+      padding:2px 8px; border-radius:999px; font-size:12px; color:var(--muted);
+    }
+    .pill.ok{ border-color:rgba(61,220,151,.35); background:rgba(61,220,151,.10); color:#bdf6df; }
+    .pill.warn{ border-color:rgba(255,209,102,.35); background:rgba(255,209,102,.10); color:#ffe6b3; }
+    .actions{ display:flex; gap:8px; align-items:center; }
+    .actions .btn{ padding:7px 10px; font-weight:700; }
+    .empty{
+      padding:22px 14px; color:var(--muted);
+    }
+    .footNote{
+      margin-top:10px; color:var(--muted); font-size:12px;
+    }
+
+    /* modal */
+    .modalBackdrop{
+      position:fixed; inset:0; background:rgba(0,0,0,.6);
+      display:none; align-items:center; justify-content:center;
+      padding:18px; z-index:200;
+    }
+    .modalBackdrop.show{ display:flex; }
+    .modal{
+      width:min(820px, 100%); border:1px solid var(--line); border-radius:16px;
+      background:linear-gradient(180deg, rgba(18,28,41,.95), rgba(15,22,32,.95));
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .modalHead{
+      padding:14px 16px; border-bottom:1px solid var(--line);
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      background:rgba(18,28,41,.65);
+    }
+    .modalHead h2{ margin:0; font-size:15px; }
+    .modalBody{ padding:14px 16px; }
+    .grid{
+      display:grid; grid-template-columns:repeat(12,1fr); gap:12px;
+    }
+    .col-12{ grid-column:span 12; }
+    .col-6{ grid-column:span 6; }
+    .col-4{ grid-column:span 4; }
+    .col-3{ grid-column:span 3; }
+    .col-8{ grid-column:span 8; }
+    .help{
+      font-size:12px; color:var(--muted); line-height:1.35;
+      border:1px dashed rgba(34,48,68,.9); border-radius:12px; padding:10px 11px;
+      background:rgba(10,14,20,.35);
+      white-space: pre-wrap;
+    }
+    .modalFoot{
+      padding:12px 16px; border-top:1px solid var(--line);
+      display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+      background:rgba(18,28,41,.55);
+    }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .toggle{
+      display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+      color:var(--muted); font-size:13px; font-weight:650;
+    }
+    .toggle input{ width:16px; height:16px; }
+    .toastWrap{
+      position:fixed; right:14px; bottom:14px; display:flex; flex-direction:column; gap:8px; z-index:400;
+      width:min(420px, calc(100% - 28px));
+    }
+    .toast{
+      border:1px solid var(--line); border-radius:14px;
+      padding:10px 12px; background:rgba(15,22,32,.92); box-shadow:var(--shadow);
+      display:flex; gap:10px; align-items:flex-start;
+    }
+    .toast b{ display:block; font-size:13px; }
+    .toast p{ margin:4px 0 0; color:var(--muted); font-size:12px; line-height:1.35; }
+    .dot{ width:10px; height:10px; border-radius:999px; margin-top:3px; background:var(--accent); flex:0 0 auto; }
+    .dot.ok{ background:var(--ok); }
+    .dot.bad{ background:var(--danger); }
+
+    @media (max-width: 880px){
+      input[type="text"], input[type="password"], select{ min-width: 180px; }
+      textarea{ min-width: 100%; }
+      .col-6, .col-4, .col-3, .col-8{ grid-column:span 12; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">
+        <h1>Manage: Accounts • Assets • Categories</h1>
+        <a href="#" id="logoutLink" style="display:none; font-size:12px; color:var(--muted); margin-left:8px;">logout</a>
+      </div>
+
+      <div class="conn" id="authPanel">
+        <div class="field">
+          <label for="pbUrl">URL</label>
+          <input id="pbUrl" type="text" placeholder="http://127.0.0.1:8090" />
+        </div>
+
+        <div class="field">
+          <label for="pbEmail">Email</label>
+          <input id="pbEmail" type="text" placeholder="you@example.com" />
+        </div>
+
+        <div class="field">
+          <label for="pbPass">Password</label>
+          <input id="pbPass" type="password" placeholder="••••••••" />
+        </div>
+
+        <button class="btn primary" id="btnLogin">Login</button>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="accounts" role="tab" aria-selected="true">Accounts</button>
+      <button class="tab" data-tab="assets" role="tab" aria-selected="false">Assets</button>
+      <button class="tab" data-tab="categories" role="tab" aria-selected="false">Categories</button>
+    </div>
+
+    <section class="panel" id="panel">
+      <div class="panelHead">
+        <div class="left">
+          <button class="btn primary" id="btnNew">+ New</button>
+          <button class="btn" id="btnRefresh">Refresh</button>
+          <span class="hint" id="hint">List + CRUD for the selected collection.</span>
+        </div>
+        <div class="right">
+          <div class="searchRow">
+            <div class="field">
+              <label for="q">Search</label>
+              <input id="q" type="text" placeholder="name, symbol, institution..." />
+            </div>
+            <label class="toggle" title="Show archived records too (where applicable)">
+              <input id="showArchived" type="checkbox" />
+              Show archived
+            </label>
+            <label class="toggle" title="Show only archived records (where applicable)">
+              <input id="onlyArchived" type="checkbox" />
+              Only archived
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="tableWrap">
+        <table id="table" aria-label="records">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="empty" id="empty" style="display:none;">
+        No records found.
+      </div>
+    </section>
+
+    <div class="footNote">
+      Conforms to the Budget System schema: accounts, assets, categories fields and enums.
+    </div>
+  </div>
+
+  <!-- modal -->
+  <div class="modalBackdrop" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modalHead">
+        <h2 id="modalTitle">Edit</h2>
+        <button class="btn ghost" id="btnClose">✕</button>
+      </div>
+      <div class="modalBody">
+        <div class="grid" id="formGrid"></div>
+        <div class="help" id="formHelp" style="margin-top:12px;"></div>
+      </div>
+      <div class="modalFoot">
+        <div class="row">
+          <span class="mono" id="recordMeta"></span>
+        </div>
+        <div class="row">
+          <button class="btn danger" id="btnDelete" style="display:none;">Delete</button>
+          <button class="btn" id="btnCancel">Cancel</button>
+          <button class="btn primary" id="btnSave">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toastWrap" id="toastWrap" aria-live="polite" aria-relevant="additions"></div>
+
+<script>
+(function(){
+  const $ = (sel, el=document) => el.querySelector(sel);
+  const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
+
+  const store = {
+    get(key, fallback=null){
+      try{ const v = localStorage.getItem(key); return v===null ? fallback : v; }catch{ return fallback; }
+    },
+    set(key, val){
+      try{ localStorage.setItem(key, val); }catch{}
+    },
+    del(key){ try{ localStorage.removeItem(key); }catch{} }
+  };
+
+  function toast(kind, title, message){
+    const wrap = $("#toastWrap");
+    const el = document.createElement("div");
+    el.className = "toast";
+    const dot = document.createElement("div");
+    dot.className = "dot " + (kind==="ok" ? "ok" : kind==="bad" ? "bad" : "");
+    const inner = document.createElement("div");
+    inner.innerHTML = `<b>${escapeHtml(title)}</b><p>${escapeHtml(message||"")}</p>`;
+    el.appendChild(dot);
+    el.appendChild(inner);
+    wrap.appendChild(el);
+    setTimeout(() => { el.style.opacity = "0"; el.style.transform="translateY(6px)"; el.style.transition="all .25s ease"; }, 4200);
+    setTimeout(() => { el.remove(); }, 4700);
+  }
+
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
+  function safeJsonParse(s){
+    if (s === "" || s == null) return { ok:true, value:null };
+    try{ return { ok:true, value: JSON.parse(s) }; }
+    catch(e){ return { ok:false, error: e?.message || "Invalid JSON" }; }
+  }
+
+  function fmtDate(ts){
+    if(!ts) return "";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return d.toISOString().replace("T"," ").slice(0,19) + "Z";
+  }
+
+  let SESSION = { base: "", token: "" };
+
+  function pbConfig(){
+    return { base: SESSION.base, token: SESSION.token };
+  }
+
+  async function pbFetch(path, opts={}){
+    const { base, token } = pbConfig();
+    if(!base) throw new Error("PocketBase URL is required.");
+
+    const headers = Object.assign(
+      { "Content-Type":"application/json" },
+      opts.headers || {}
+    );
+    if(token){
+      // PocketBase expects: Authorization: Bearer <token>
+      const t = /^Bearer\s+/i.test(token) ? token : ("Bearer " + token);
+      headers["Authorization"] = t;
+    }
+
+    let res;
+    try{
+      res = await fetch(base + path, Object.assign({}, opts, { headers }));
+    }catch(err){
+      const msg = (err && err.message) ? err.message : String(err);
+      // Common causes: CORS, mixed-content (https page -> http API), DNS/port unreachable
+      throw new Error(`Network error (fetch failed): ${msg}. Check PocketBase URL, CORS, and http/https.`);
+    }
+    const text = await res.text();
+    let data = null;
+    try{ data = text ? JSON.parse(text) : null; }catch{ data = text; }
+    if(!res.ok){
+      const msg = (data && (data.message || data?.data || data?.error)) ? JSON.stringify(data) : (text || res.statusText);
+      throw new Error(`HTTP ${res.status}: ${msg}`);
+    }
+    return data;
+  }
+
+  async function listRecords(collection, { q="", showArchived=false, onlyArchived=false }={}){
+    const perPage = 200;
+
+    async function tryList({ includeSearch=true, includeArchivedFilter=true }){
+      let filterParts = [];
+
+      const query = (q || "").trim();
+      if (includeSearch && query){
+        const esc = query.replaceAll('"','\"');
+        if(collection === "accounts"){
+          filterParts.push(`name ~ "${esc}" || institution ~ "${esc}" || type ~ "${esc}"`);
+        } else if(collection === "assets"){
+          filterParts.push(`symbol ~ "${esc}" || name ~ "${esc}"`);
+        } else if(collection === "categories"){
+          filterParts.push(`name ~ "${esc}" || kind ~ "${esc}"`);
+        }
+      }
+
+      // archived flags are optional in many schemas; only apply when requested
+      if(includeArchivedFilter && (collection === "accounts" || collection === "categories")){
+        if(onlyArchived){
+          filterParts.push(`is_archived = true`);
+        } else if(!showArchived){
+          filterParts.push(`is_archived = false`);
+        }
+      }
+
+      const filter = filterParts.length ? `&filter=${encodeURIComponent(filterParts.join(" && "))}` : "";
+      const url = `/api/collections/${encodeURIComponent(collection)}/records?page=1&perPage=${perPage}${filter}`;
+      const data = await pbFetch(url, { method:"GET" });
+      return data?.items || [];
+    }
+
+    try{
+      return await tryList({ includeSearch:true, includeArchivedFilter:true });
+    }catch(e1){
+      const msg = String(e1?.message || e1);
+      // A common PocketBase 400 cause: filter references fields that don't exist (e.g., is_archived)
+      if(msg.startsWith("HTTP 400:")){
+        try{
+          const items = await tryList({ includeSearch:true, includeArchivedFilter:false });
+          toast("bad", "Filter adjusted", "Your collection may not have is_archived; loaded without archived filtering.");
+          return items;
+        }catch(e2){
+          const msg2 = String(e2?.message || e2);
+          if(msg2.startsWith("HTTP 400:")){
+            // last resort: no filters at all
+            const items = await tryList({ includeSearch:false, includeArchivedFilter:false });
+            toast("bad", "Filters disabled", "Search/filter syntax was rejected; loaded without filters. Check collection/field names.");
+            return items;
+          }
+          throw e2;
+        }
+      }
+      throw e1;
+    }
+  }
+
+  async function createRecord(collection, body){
+    return pbFetch(`/api/collections/${encodeURIComponent(collection)}/records`, {
+      method:"POST",
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function updateRecord(collection, id, body){
+    return pbFetch(`/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`, {
+      method:"PATCH",
+      body: JSON.stringify(body)
+    });
+  }
+
+  async function deleteRecord(collection, id){
+    return pbFetch(`/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`, {
+      method:"DELETE"
+    });
+  }
+
+  const SCHEMA = {
+    accounts: {
+      label: "Accounts",
+      help: [
+        "Schema: name (required), type (required), institution (optional), is_archived (bool), meta (json).",
+        "Type enum: bank | credit | brokerage | cash | crypto | virtual | other.",
+        "Note: Budget modules typically exclude accounts.type = virtual (per schema)."
+      ].join("\n"),
+      fields: [
+        { key:"name", label:"Name", type:"text", required:true, placeholder:"Checking" },
+        { key:"type", label:"Type", type:"select", required:true, options:["bank","credit","brokerage","cash","crypto","virtual","other"] },
+        { key:"institution", label:"Institution", type:"text", required:false, placeholder:"Chase" },
+        { key:"is_archived", label:"Archived", type:"bool", required:false },
+        { key:"meta", label:"Meta (JSON)", type:"json", required:false, placeholder:'{"color":"#7aa8ff"}' }
+      ],
+      columns: [
+        { key:"name", label:"Name" },
+        { key:"type", label:"Type", pill:true },
+        { key:"institution", label:"Institution" },
+        { key:"is_archived", label:"Archived", pillBool:true },
+        { key:"id", label:"ID", mono:true }
+      ]
+    },
+    assets: {
+      label: "Assets",
+      help: [
+        "Schema: symbol (required, unique), name (optional), precision (number, optional), meta (json).",
+        "Examples: USD, AAPL, BTC."
+      ].join("\n"),
+      fields: [
+        { key:"symbol", label:"Symbol", type:"text", required:true, placeholder:"USD", transform:"upper" },
+        { key:"name", label:"Name", type:"text", required:false, placeholder:"US Dollar" },
+        { key:"precision", label:"Precision", type:"number", required:false, placeholder:"2" },
+        { key:"meta", label:"Meta (JSON)", type:"json", required:false, placeholder:'{"assetClass":"currency"}' }
+      ],
+      columns: [
+        { key:"symbol", label:"Symbol", pill:true },
+        { key:"name", label:"Name" },
+        { key:"precision", label:"Precision" },
+        { key:"id", label:"ID", mono:true }
+      ]
+    },
+    categories: {
+      label: "Categories",
+      help: [
+        "Schema: name (required), parent (optional relation → categories), kind (required), is_archived (bool), meta (json).",
+        "Kind enum: income, expense, transfer, trade_cash, trade_asset, fee, withholding, benefit, employer_contrib, info, other."
+      ].join("\n"),
+      fields: [
+        { key:"name", label:"Name", type:"text", required:true, placeholder:"Groceries" },
+        { key:"kind", label:"Kind", type:"select", required:true, options:[
+          "income","expense","transfer","trade_cash","trade_asset","fee","withholding","benefit","employer_contrib","info","other"
+        ]},
+        { key:"parent", label:"Parent Category", type:"relation", required:false, relation:"categories", placeholder:"(optional)" },
+        { key:"is_archived", label:"Archived", type:"bool", required:false },
+        { key:"meta", label:"Meta (JSON)", type:"json", required:false, placeholder:'{"group":"Living"}' }
+      ],
+      columns: [
+        { key:"name", label:"Name" },
+        { key:"kind", label:"Kind", pill:true },
+        { key:"parent", label:"Parent", render:"parentName" },
+        { key:"is_archived", label:"Archived", pillBool:true },
+        { key:"id", label:"ID", mono:true }
+      ]
+    }
+  };
+
+  let activeTab = "accounts";
+  let records = [];
+  let categoriesIndex = new Map();
+  let editing = { mode:"new", id:null, data:null };
+
+  function setActiveTab(tab){
+    activeTab = tab;
+    $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    $$(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+    $("#hint").textContent = `Manage ${SCHEMA[tab].label}: add, edit, delete.`;
+    $("#q").value = "";
+    $("#showArchived").checked = false;
+    $("#onlyArchived").checked = false;
+    refresh();
+  }
+
+  function renderTable(){
+    const schema = SCHEMA[activeTab];
+    const thead = $("#table thead");
+    const tbody = $("#table tbody");
+    thead.innerHTML = "";
+    tbody.innerHTML = "";
+
+    const trh = document.createElement("tr");
+    schema.columns.forEach(c => {
+      const th = document.createElement("th");
+      th.textContent = c.label;
+      trh.appendChild(th);
+    });
+    const thA = document.createElement("th");
+    thA.textContent = "Actions";
+    trh.appendChild(thA);
+    thead.appendChild(trh);
+
+    $("#empty").style.display = records.length ? "none" : "block";
+
+    records.forEach(r => {
+      const tr = document.createElement("tr");
+      schema.columns.forEach(c => {
+        const td = document.createElement("td");
+        if(c.render === "parentName"){
+          const parentId = r.parent || "";
+          td.textContent = parentId ? (categoriesIndex.get(parentId)?.name || parentId) : "";
+          if(parentId) td.classList.add("mono");
+        } else if(c.pillBool){
+          const v = !!r[c.key];
+          const span = document.createElement("span");
+          span.className = "pill " + (v ? "warn" : "ok");
+          span.textContent = v ? "Yes" : "No";
+          td.appendChild(span);
+        } else if(c.pill){
+          const span = document.createElement("span");
+          span.className = "pill";
+          span.textContent = r[c.key] ?? "";
+          td.appendChild(span);
+        } else {
+          const v = r[c.key];
+          td.textContent = v == null ? "" : String(v);
+          if(c.mono) td.classList.add("mono");
+        }
+        tr.appendChild(td);
+      });
+
+      const tdA = document.createElement("td");
+      const wrap = document.createElement("div");
+      wrap.className = "actions";
+
+      const btnEdit = document.createElement("button");
+      btnEdit.className = "btn";
+      btnEdit.textContent = "Edit";
+      btnEdit.addEventListener("click", () => openEditor("edit", r));
+      wrap.appendChild(btnEdit);
+
+      if(activeTab === "accounts" || activeTab === "categories"){
+        const btnArch = document.createElement("button");
+        btnArch.className = "btn";
+        btnArch.textContent = r.is_archived ? "Unarchive" : "Archive";
+        btnArch.addEventListener("click", async () => {
+          try{
+            await updateRecord(activeTab, r.id, { is_archived: !r.is_archived });
+            toast("ok", "Updated", `${schema.label.slice(0,-1)} ${r.id} ${r.is_archived ? "unarchived" : "archived"}.`);
+            refresh();
+          }catch(e){
+            toast("bad", "Update failed", e.message || String(e));
+          }
+        });
+        wrap.appendChild(btnArch);
+      }
+
+      tdA.appendChild(wrap);
+      tr.appendChild(tdA);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function buildField(field, data){
+    const colSpan = (field.type === "json") ? "col-12" : (field.type === "relation") ? "col-6" : "col-6";
+    const box = document.createElement("div");
+    box.className = colSpan + " field";
+
+    const label = document.createElement("label");
+    label.textContent = field.label + (field.required ? " *" : "");
+    label.htmlFor = "f_" + field.key;
+    box.appendChild(label);
+
+    let input;
+
+    if(field.type === "select"){
+      input = document.createElement("select");
+      input.id = "f_" + field.key;
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = "Select...";
+      input.appendChild(opt0);
+      field.options.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = v;
+        input.appendChild(opt);
+      });
+      input.value = data[field.key] ?? "";
+    } else if(field.type === "bool"){
+      const row = document.createElement("label");
+      row.className = "toggle";
+      row.style.color = "var(--text)";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.id = "f_" + field.key;
+      cb.checked = !!data[field.key];
+      row.appendChild(cb);
+      const t = document.createElement("span");
+      t.textContent = field.label;
+      row.appendChild(t);
+      box.innerHTML = "";
+      box.appendChild(row);
+      return box;
+    } else if(field.type === "number"){
+      input = document.createElement("input");
+      input.id = "f_" + field.key;
+      input.type = "text";
+      input.placeholder = field.placeholder || "";
+      input.value = (data[field.key] == null) ? "" : String(data[field.key]);
+      input.inputMode = "decimal";
+    } else if(field.type === "json"){
+      input = document.createElement("textarea");
+      input.id = "f_" + field.key;
+      input.placeholder = field.placeholder || "";
+      input.value = (data[field.key] == null) ? "" : JSON.stringify(data[field.key], null, 2);
+    } else if(field.type === "relation"){
+      input = document.createElement("select");
+      input.id = "f_" + field.key;
+
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = "(none)";
+      input.appendChild(opt0);
+
+      const items = Array.from(categoriesIndex.values()).sort((a,b) => (a.name||"").localeCompare(b.name||""));
+      items.forEach(cat => {
+        const opt = document.createElement("option");
+        opt.value = cat.id;
+        opt.textContent = `${cat.name}  —  ${cat.kind}`;
+        input.appendChild(opt);
+      });
+      input.value = data[field.key] ?? "";
+    } else {
+      input = document.createElement("input");
+      input.id = "f_" + field.key;
+      input.type = "text";
+      input.placeholder = field.placeholder || "";
+      input.value = data[field.key] ?? "";
+    }
+
+    box.appendChild(input);
+    return box;
+  }
+
+  function openEditor(mode, record){
+    const schema = SCHEMA[activeTab];
+    editing.mode = mode;
+    editing.id = mode === "edit" ? record.id : null;
+    editing.data = mode === "edit" ? record : {};
+
+    $("#modalTitle").textContent = (mode === "edit" ? "Edit " : "New ") + schema.label.slice(0,-1);
+    $("#recordMeta").textContent = mode === "edit"
+      ? `id=${record.id}  created=${fmtDate(record.created)}  updated=${fmtDate(record.updated)}`
+      : "";
+    $("#btnDelete").style.display = mode === "edit" ? "inline-flex" : "none";
+
+    const grid = $("#formGrid");
+    grid.innerHTML = "";
+    schema.fields.forEach(f => grid.appendChild(buildField(f, editing.data)));
+
+    $("#formHelp").textContent = schema.help;
+
+    showModal(true);
+  }
+
+  function showModal(on){
+    $("#modalBackdrop").classList.toggle("show", !!on);
+    $("#modalBackdrop").setAttribute("aria-hidden", String(!on));
+    if(on){
+      setTimeout(() => {
+        const first = $("#formGrid input, #formGrid select, #formGrid textarea");
+        if(first) first.focus();
+      }, 0);
+    }
+  }
+
+  function readEditorBody(){
+    const schema = SCHEMA[activeTab];
+    const out = {};
+    for(const f of schema.fields){
+      const id = "#f_" + f.key;
+      if(f.type === "bool"){
+        out[f.key] = $(id).checked;
+        continue;
+      }
+      const el = $(id);
+      const raw = (el?.value ?? "").trim();
+
+      if(f.type === "select"){
+        out[f.key] = raw || null;
+      } else if(f.type === "number"){
+        if(raw === "") out[f.key] = null;
+        else {
+          const n = Number(raw);
+          if(!Number.isFinite(n)) throw new Error(`${f.label} must be a valid number.`);
+          out[f.key] = n;
+        }
+      } else if(f.type === "json"){
+        const parsed = safeJsonParse(raw);
+        if(!parsed.ok) throw new Error(`${f.label}: ${parsed.error}`);
+        out[f.key] = parsed.value;
+      } else if(f.type === "relation"){
+        out[f.key] = raw || null;
+      } else {
+        let v = raw;
+        if(f.transform === "upper") v = v.toUpperCase();
+        out[f.key] = v || null;
+      }
+
+      if(f.required){
+        const v = out[f.key];
+        if(v === null || v === "" || v === undefined){
+          throw new Error(`${f.label} is required.`);
+        }
+      }
+    }
+
+    if("meta" in out && out.meta === null) delete out.meta;
+    if(activeTab === "categories" && out.parent === null) delete out.parent;
+    ["institution","name","symbol"].forEach(k => { if(out[k] === null) delete out[k]; });
+
+    return out;
+  }
+
+  async function refresh(){
+    try{
+      $("#btnRefresh").disabled = true;
+      $("#btnNew").disabled = true;
+
+      const catsAll = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false });
+      categoriesIndex = new Map(catsAll.map(c => [c.id, c]));
+
+      const q = $("#q").value;
+      const showArchived = $("#showArchived").checked;
+      const onlyArchived = $("#onlyArchived").checked;
+      if(onlyArchived) $("#showArchived").checked = true;
+
+      records = await listRecords(activeTab, { q, showArchived, onlyArchived });
+      renderTable();
+    }catch(e){
+      records = [];
+      renderTable();
+      toast("bad", "Refresh failed", e.message || String(e));
+    }finally{
+      $("#btnRefresh").disabled = false;
+      $("#btnNew").disabled = false;
+    }
+  }
+
+  $$(".tab").forEach(b => b.addEventListener("click", () => setActiveTab(b.dataset.tab)));
+
+  $("#btnRefresh").addEventListener("click", refresh);
+  $("#btnNew").addEventListener("click", () => openEditor("new", {}));
+
+  $("#q").addEventListener("keydown", (e) => { if(e.key === "Enter") refresh(); });
+  $("#showArchived").addEventListener("change", () => {
+    if(!$("#showArchived").checked) $("#onlyArchived").checked = false;
+    refresh();
+  });
+  $("#onlyArchived").addEventListener("change", () => {
+    if($("#onlyArchived").checked) $("#showArchived").checked = true;
+    refresh();
+  });
+
+  $("#btnClose").addEventListener("click", () => showModal(false));
+  $("#btnCancel").addEventListener("click", () => showModal(false));
+  $("#modalBackdrop").addEventListener("click", (e) => { if(e.target === $("#modalBackdrop")) showModal(false); });
+  window.addEventListener("keydown", (e) => { if(e.key === "Escape" && $("#modalBackdrop").classList.contains("show")) showModal(false); });
+
+  $("#btnSave").addEventListener("click", async () => {
+    const schema = SCHEMA[activeTab];
+    try{
+      $("#btnSave").disabled = true;
+      const body = readEditorBody();
+
+      if(editing.mode === "new"){
+        const created = await createRecord(activeTab, body);
+        toast("ok", "Created", `${schema.label.slice(0,-1)} ${created?.id || ""} created.`);
+      } else {
+        await updateRecord(activeTab, editing.id, body);
+        toast("ok", "Saved", `${schema.label.slice(0,-1)} ${editing.id} updated.`);
+      }
+
+      showModal(false);
+      refresh();
+    }catch(e){
+      toast("bad", "Save failed", e.message || String(e));
+    }finally{
+      $("#btnSave").disabled = false;
+    }
+  });
+
+  $("#btnDelete").addEventListener("click", async () => {
+    const schema = SCHEMA[activeTab];
+    if(editing.mode !== "edit" || !editing.id) return;
+    const ok = confirm(`Delete this ${schema.label.slice(0,-1)}?\n\nThis cannot be undone.`);
+    if(!ok) return;
+
+    try{
+      $("#btnDelete").disabled = true;
+      await deleteRecord(activeTab, editing.id);
+      toast("ok", "Deleted", `${schema.label.slice(0,-1)} ${editing.id} deleted.`);
+      showModal(false);
+      refresh();
+    }catch(e){
+      toast("bad", "Delete failed", e.message || String(e));
+    }finally{
+      $("#btnDelete").disabled = false;
+    }
+  });
+
+  async function pbAuthWithPassword(email, password){
+    // Hard-coded auth collection: users
+    const body = JSON.stringify({ identity: email, password });
+    return pbFetch(`/api/collections/${encodeURIComponent("users")}/auth-with-password`, { method:"POST", body });
+  }
+
+  async function pbAuthRefresh(){
+    // Validates current token and (usually) returns a refreshed token
+    return pbFetch(`/api/collections/${encodeURIComponent("users")}/auth-refresh`, { method:"POST" });
+  }
+
+  function setLoggedInUI(isLoggedIn){
+    const authPanel = $("#authPanel");
+    const logout = $("#logoutLink");
+    if(authPanel) authPanel.style.display = isLoggedIn ? "none" : "flex";
+    if(logout) logout.style.display = isLoggedIn ? "inline" : "none";
+  }
+
+  async function validateCachedSession(){
+    if(!SESSION.base || !SESSION.token) return false;
+    try{
+      const res = await pbAuthRefresh();
+      if(res?.token){
+        SESSION.token = res.token;
+        store.set("pbToken", res.token);
+      }
+      return true;
+    }catch{
+      return false;
+    }
+  }
+
+  $("#logoutLink").addEventListener("click", (e) => {
+    e.preventDefault();
+    SESSION.base = "";
+    SESSION.token = "";
+    store.del("pbUrl");
+    store.del("pbEmail");
+    store.del("pbToken");
+    $("#pbUrl").value = "";
+    $("#pbEmail").value = "";
+    $("#pbPass").value = "";
+    setLoggedInUI(false);
+    records = [];
+    renderTable();
+    toast("ok", "Logged out", "Local session cleared.");
+  });
+
+  $("#btnLogin").addEventListener("click", async () => {
+    const base = $("#pbUrl").value.trim().replace(/\/+$/, "");
+    const email = $("#pbEmail").value.trim();
+    const password = $("#pbPass").value;
+
+    if(!base){
+      toast("bad", "Login", "Enter URL.");
+      return;
+    }
+    if(!email || !password){
+      toast("bad", "Login", "Enter email and password.");
+      return;
+    }
+
+    // persist URL + email for convenience
+    store.set("pbUrl", base);
+    store.set("pbEmail", email);
+
+    try{
+      $("#btnLogin").disabled = true;
+      SESSION.base = base;
+      SESSION.token = "";
+
+      const res = await pbAuthWithPassword(email, password);
+      const token = res?.token;
+      if(!token) throw new Error("No token returned by PocketBase.");
+
+      SESSION.token = token;
+      store.set("pbToken", token);
+
+      setLoggedInUI(true);
+      toast("ok", "Login succeeded", "Session saved.");
+      refresh();
+    }catch(e){
+      SESSION.token = "";
+      store.del("pbToken");
+      setLoggedInUI(false);
+      toast("bad", "Login failed", e.message || String(e));
+    }finally{
+      $("#btnLogin").disabled = false;
+      // Do not persist password
+      $("#pbPass").value = "";
+    }
+  });
+
+  // Prefill from localStorage
+  $("#pbUrl").value = store.get("pbUrl", "");
+  $("#pbEmail").value = store.get("pbEmail", "");
+
+  // On load: if URL + token exist, validate them; if valid hide login; else show login
+  (async () => {
+    SESSION.base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+    SESSION.token = (store.get("pbToken", "") || "").trim();
+
+    if(SESSION.base && SESSION.token){
+      const ok = await validateCachedSession();
+      if(ok){
+        setLoggedInUI(true);
+        refresh();
+        return;
+      }
+      // token invalid
+      SESSION.token = "";
+      store.del("pbToken");
+    }
+
+    setLoggedInUI(false);
+    records = [];
+    renderTable();
+    toast("bad", "Not logged in", "Enter URL, email, password and click Login.");
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,917 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BudgetKit - Core Transaction Register</title>
+  <style>
+    :root {
+      --bg: #0a0f16;
+      --panel: #111a26;
+      --panel2: #172335;
+      --text: #e7edf6;
+      --muted: #a8b7ca;
+      --line: #2a3a52;
+      --accent: #6ec1ff;
+      --ok: #3ed598;
+      --warn: #ffd479;
+      --bad: #ff7f7f;
+      --radius: 12px;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background: radial-gradient(circle at top right, #17263b 0%, #0a0f16 45%, #070b10 100%);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1260px; margin: 0 auto; padding: 16px; }
+    .topbar, .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(17, 26, 38, 0.92);
+      box-shadow: var(--shadow);
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px;
+    }
+    h1 { margin: 0; font-size: 18px; }
+    .sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .auth {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    label { color: var(--muted); font-size: 12px; }
+    input[type="text"], input[type="password"], input[type="datetime-local"], input[type="date"], select, textarea {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(23, 35, 53, 0.95);
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110, 193, 255, 0.15); }
+    textarea { min-height: 68px; resize: vertical; }
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: rgba(23, 35, 53, 0.95);
+      color: var(--text);
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { border-color: rgba(110, 193, 255, 0.55); background: rgba(110, 193, 255, 0.18); }
+    .btn.danger { border-color: rgba(255, 127, 127, 0.55); background: rgba(255, 127, 127, 0.16); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .logout {
+      display: none;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+    .status {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 13px;
+      background: rgba(14, 22, 33, 0.75);
+      color: var(--muted);
+    }
+    .status.ok { border-color: rgba(62, 213, 152, 0.45); color: #bdf7df; }
+    .status.warn { border-color: rgba(255, 212, 121, 0.45); color: #ffeabc; }
+    .status.bad { border-color: rgba(255, 127, 127, 0.45); color: #ffd1d1; }
+    #app { display: none; margin-top: 12px; }
+    .grid { display: grid; grid-template-columns: 420px 1fr; gap: 12px; }
+    .panel { padding: 12px; }
+    .panel h2 { margin: 0 0 10px; font-size: 14px; }
+    .line { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+    .line .field { min-width: 110px; }
+    .composer {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(12, 1fr);
+    }
+    .c12 { grid-column: span 12; }
+    .c6 { grid-column: span 6; }
+    .c4 { grid-column: span 4; }
+    .c3 { grid-column: span 3; }
+    .entryRow {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(15, 24, 36, 0.95);
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(12, 1fr);
+      margin-top: 8px;
+    }
+    .entryRow .c2 { grid-column: span 2; }
+    .entryRow .c3 { grid-column: span 3; }
+    .entryRow .c4 { grid-column: span 4; }
+    .entryRow .c12 { grid-column: span 12; }
+    .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); padding: 9px 8px; font-size: 12px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.2px; }
+    tr.selected { background: rgba(110, 193, 255, 0.08); }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .help { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    @media (max-width: 1080px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .composer .c6, .composer .c4, .composer .c3,
+      .entryRow .c2, .entryRow .c3, .entryRow .c4 { grid-column: span 12; }
+      .auth input[type="text"], .auth input[type="password"] { width: 100%; }
+      .auth .field { min-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Core Transaction Register <a class="logout" id="logoutLink" href="#">logout</a></h1>
+        <div class="sub">Transactions (`txns`) and entries (`entries`) with multi-entry support.</div>
+      </div>
+      <div class="auth" id="authPanel">
+        <div class="field">
+          <label for="pbUrl">URL</label>
+          <input id="pbUrl" type="text" placeholder="http://127.0.0.1:8090" />
+        </div>
+        <div class="field">
+          <label for="pbEmail">Email</label>
+          <input id="pbEmail" type="text" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="pbPass">Password</label>
+          <input id="pbPass" type="password" placeholder="password" />
+        </div>
+        <button class="btn primary" id="btnLogin">Login</button>
+      </div>
+    </div>
+
+    <div class="status" id="statusBox">Not authenticated.</div>
+
+    <div id="app">
+      <div class="grid">
+        <section class="panel">
+          <h2>Compose Transaction</h2>
+          <div class="composer">
+            <div class="field c6">
+              <label for="txnTs">Timestamp *</label>
+              <input id="txnTs" type="datetime-local" />
+            </div>
+            <div class="field c6">
+              <label for="txnPayee">Payee</label>
+              <input id="txnPayee" type="text" placeholder="Merchant / Employer" />
+            </div>
+            <div class="field c6">
+              <label for="txnSource">Source</label>
+              <input id="txnSource" type="text" placeholder="manual" />
+            </div>
+            <div class="field c6">
+              <label for="txnExternal">External ID</label>
+              <input id="txnExternal" type="text" placeholder="optional import id" />
+            </div>
+            <div class="field c12">
+              <label for="txnMemo">Memo</label>
+              <textarea id="txnMemo" placeholder="Transaction memo"></textarea>
+            </div>
+          </div>
+
+          <div class="toolbar" style="margin-top: 8px;">
+            <strong style="font-size:13px;">Entries</strong>
+            <div class="line">
+              <button class="btn" id="btnAddEntry" type="button">+ Add entry row</button>
+              <button class="btn primary" id="btnSaveTxn" type="button">Save transaction</button>
+            </div>
+          </div>
+          <div id="entryRows"></div>
+          <div class="help" style="margin-top:10px;">
+            Signed quantity: positive for inflow, negative for outflow. A transaction can include one or many entries.
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="toolbar">
+            <h2 style="margin:0;">Register</h2>
+            <div class="line">
+              <button class="btn" id="btnRefresh">Refresh</button>
+              <button class="btn danger" id="btnDeleteTxn" disabled>Delete selected txn</button>
+            </div>
+          </div>
+
+          <div class="line" style="margin-bottom:8px;">
+            <div class="field">
+              <label for="fltFrom">From</label>
+              <input id="fltFrom" type="date" />
+            </div>
+            <div class="field">
+              <label for="fltTo">To</label>
+              <input id="fltTo" type="date" />
+            </div>
+            <div class="field">
+              <label for="fltAccount">Account</label>
+              <select id="fltAccount"></select>
+            </div>
+            <div class="field">
+              <label for="fltCategory">Category</label>
+              <select id="fltCategory"></select>
+            </div>
+            <div class="field">
+              <label for="fltStatus">Status</label>
+              <select id="fltStatus">
+                <option value="">(any)</option>
+                <option value="pending">pending</option>
+                <option value="cleared">cleared</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="fltBudgetOnly">Budget kinds</label>
+              <select id="fltBudgetOnly">
+                <option value="0">All entries</option>
+                <option value="1">Income/Expense only</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>TS</th>
+                  <th>Payee</th>
+                  <th>Account</th>
+                  <th>Category</th>
+                  <th>Asset</th>
+                  <th>Qty</th>
+                  <th>Status</th>
+                  <th>Txn</th>
+                </tr>
+              </thead>
+              <tbody id="registerBody"></tbody>
+            </table>
+          </div>
+          <div class="help" id="resultCount" style="margin-top:10px;"></div>
+          <div class="mono" id="selectedMeta" style="margin-top:8px;"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const $ = (s, el) => (el || document).querySelector(s);
+      const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+
+      const store = {
+        get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+        set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+        del(k) { try { localStorage.removeItem(k); } catch {} }
+      };
+
+      const SESSION = { base: "", token: "" };
+      const state = {
+        loading: false,
+        saving: false,
+        deleting: false,
+        accounts: [],
+        assets: [],
+        categories: [],
+        txns: new Map(),
+        entries: [],
+        selectedTxnId: ""
+      };
+
+      function escapeHtml(v) {
+        return String(v == null ? "" : v)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function isoNoMs(dateObj) {
+        return new Date(dateObj).toISOString().replace(/\.\d{3}Z$/, "Z");
+      }
+
+      function fmtIso(ts) {
+        if (!ts) return "";
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return String(ts);
+        return d.toISOString().replace("T", " ").slice(0, 19) + "Z";
+      }
+
+      function setStatus(kind, message) {
+        const box = $("#statusBox");
+        box.className = "status" + (kind ? " " + kind : "");
+        box.textContent = message;
+      }
+
+      function classifyError(err) {
+        if (!err || typeof err !== "object") return { kind: "bad", message: String(err || "Unknown error") };
+        if (err.kind === "network") return { kind: "bad", message: "Network error: check URL, protocol (http/https), host, and CORS." };
+        if (err.kind === "auth") return { kind: "bad", message: "Auth failure: session expired or credentials/token were rejected." };
+        if (err.kind === "query") return { kind: "warn", message: "Query/schema mismatch (HTTP 400): fallback query was used." };
+        return { kind: "bad", message: err.message || "Request failed." };
+      }
+
+      async function pbFetch(path, options) {
+        if (!SESSION.base) {
+          const e = new Error("PocketBase URL is required.");
+          e.kind = "auth";
+          throw e;
+        }
+
+        const headers = Object.assign({ "Content-Type": "application/json" }, (options && options.headers) || {});
+        if (SESSION.token) headers["Authorization"] = /^Bearer\s+/i.test(SESSION.token) ? SESSION.token : ("Bearer " + SESSION.token);
+
+        let res;
+        try {
+          res = await fetch(SESSION.base + path, Object.assign({}, options || {}, { headers }));
+        } catch (error) {
+          const e = new Error("Network error (fetch failed): " + (error && error.message ? error.message : String(error)));
+          e.kind = "network";
+          throw e;
+        }
+
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+        if (!res.ok) {
+          const e = new Error("HTTP " + res.status + ": " + (typeof data === "string" ? data : JSON.stringify(data || {})));
+          e.status = res.status;
+          if (res.status === 401 || res.status === 403) e.kind = "auth";
+          else if (res.status === 400) e.kind = "query";
+          else e.kind = "bad";
+          throw e;
+        }
+
+        return data;
+      }
+
+      function toQS(params) {
+        return Object.keys(params)
+          .filter((k) => params[k] !== "" && params[k] != null)
+          .map((k) => encodeURIComponent(k) + "=" + encodeURIComponent(params[k]))
+          .join("&");
+      }
+
+      async function listRecordsSafe(collection, opts) {
+        const options = opts || {};
+        const perPage = options.perPage || 200;
+
+        const attemptOne = {
+          page: 1,
+          perPage: perPage,
+          filter: options.filter || "",
+          sort: options.sort || "",
+          expand: options.expand || ""
+        };
+        const attemptTwo = {
+          page: 1,
+          perPage: perPage,
+          sort: options.sort || "",
+          expand: options.expand || ""
+        };
+        const attemptThree = { page: 1, perPage: perPage };
+
+        async function runAttempt(q) {
+          const qs = toQS(q);
+          const data = await pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records?" + qs, { method: "GET" });
+          return (data && data.items) ? data.items : [];
+        }
+
+        try {
+          return await runAttempt(attemptOne);
+        } catch (e1) {
+          if (e1 && e1.status === 400) {
+            try {
+              setStatus("warn", "Adjusted listing query after HTTP 400 (schema/filter mismatch). Loaded with fewer filters.");
+              return await runAttempt(attemptTwo);
+            } catch (e2) {
+              if (e2 && e2.status === 400) {
+                setStatus("warn", "Adjusted listing query again after HTTP 400. Loaded with no filter/sort constraints.");
+                return await runAttempt(attemptThree);
+              }
+              throw e2;
+            }
+          }
+          throw e1;
+        }
+      }
+
+      async function createRecord(collection, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records", {
+          method: "POST",
+          body: JSON.stringify(body)
+        });
+      }
+
+      async function deleteRecord(collection, id) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), { method: "DELETE" });
+      }
+
+      async function authWithPassword(email, password) {
+        return pbFetch("/api/collections/users/auth-with-password", {
+          method: "POST",
+          body: JSON.stringify({ identity: email, password: password })
+        });
+      }
+
+      async function authRefresh() {
+        return pbFetch("/api/collections/users/auth-refresh", { method: "POST" });
+      }
+
+      function setAuthenticatedUI(isLoggedIn) {
+        $("#authPanel").style.display = isLoggedIn ? "none" : "flex";
+        $("#logoutLink").style.display = isLoggedIn ? "inline" : "none";
+        $("#app").style.display = isLoggedIn ? "block" : "none";
+      }
+
+      function setBusy() {
+        const disabled = !SESSION.token || state.loading || state.saving || state.deleting;
+        ["#btnRefresh", "#btnSaveTxn", "#btnAddEntry", "#btnLogin"].forEach((sel) => {
+          const el = $(sel);
+          if (el) el.disabled = disabled && sel !== "#btnLogin";
+        });
+        const canDelete = !!SESSION.token && !!state.selectedTxnId && !state.loading && !state.saving && !state.deleting;
+        $("#btnDeleteTxn").disabled = !canDelete;
+      }
+
+      function entryTemplate(data) {
+        const d = data || {};
+        const row = document.createElement("div");
+        row.className = "entryRow";
+        row.innerHTML = [
+          '<div class="field c3"><label>Account *</label><select data-k="account"></select></div>',
+          '<div class="field c3"><label>Category</label><select data-k="category"></select></div>',
+          '<div class="field c2"><label>Asset *</label><select data-k="asset"></select></div>',
+          '<div class="field c2"><label>Qty *</label><input data-k="qty" type="text" placeholder="-50 or 100.25" /></div>',
+          '<div class="field c2"><label>Status *</label><select data-k="status"></select></div>',
+          '<div class="field c12"><label>Entry memo</label><input data-k="memo" type="text" placeholder="optional" /></div>',
+          '<div class="c12"><button class="btn danger" type="button" data-k="remove">Remove row</button></div>'
+        ].join("");
+
+        const accountSel = $('select[data-k="account"]', row);
+        const categorySel = $('select[data-k="category"]', row);
+        const assetSel = $('select[data-k="asset"]', row);
+        const statusSel = $('select[data-k="status"]', row);
+
+        accountSel.innerHTML = '<option value="">Select account</option>' + state.accounts.map((a) => '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.name || a.id) + ' (' + escapeHtml(a.type || "other") + ')</option>').join("");
+        categorySel.innerHTML = '<option value="">(none)</option>' + state.categories.map((c) => '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name || c.id) + ' [' + escapeHtml(c.kind || "other") + ']</option>').join("");
+        assetSel.innerHTML = state.assets.map((a) => '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.symbol || a.id) + '</option>').join("");
+        statusSel.innerHTML = '<option value="pending">pending</option><option value="cleared">cleared</option>';
+
+        accountSel.value = d.account || "";
+        categorySel.value = d.category || "";
+        assetSel.value = d.asset || (state.assets.find((a) => String(a.symbol).toUpperCase() === "USD") || {}).id || "";
+        $('input[data-k="qty"]', row).value = d.qty == null ? "" : String(d.qty);
+        statusSel.value = d.status || "cleared";
+        $('input[data-k="memo"]', row).value = d.memo || "";
+
+        $('button[data-k="remove"]', row).addEventListener("click", function() {
+          row.remove();
+          if ($$(".entryRow", $("#entryRows")).length === 0) addEntryRow();
+        });
+
+        return row;
+      }
+
+      function addEntryRow(seed) {
+        $("#entryRows").appendChild(entryTemplate(seed));
+      }
+
+      function refillFilterSelect(selId, list, placeholder, labelFn) {
+        const sel = $(selId);
+        const current = sel.value;
+        sel.innerHTML = '<option value="">' + escapeHtml(placeholder) + '</option>' + list.map((item) => '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(labelFn(item)) + '</option>').join("");
+        sel.value = current;
+      }
+
+      function buildEntriesFilter() {
+        const out = [];
+        const account = $("#fltAccount").value;
+        const category = $("#fltCategory").value;
+        const status = $("#fltStatus").value;
+        const from = $("#fltFrom").value;
+        const to = $("#fltTo").value;
+
+        if (account) out.push('account = "' + account.replaceAll('"', '\\"') + '"');
+        if (category) out.push('category = "' + category.replaceAll('"', '\\"') + '"');
+        if (status) out.push('status = "' + status.replaceAll('"', '\\"') + '"');
+        if (from) out.push('ts >= "' + from + ' 00:00:00Z"');
+        if (to) out.push('ts <= "' + to + ' 23:59:59Z"');
+        return out.join(" && ");
+      }
+
+      function filteredClientSide(entries) {
+        const budgetOnly = $("#fltBudgetOnly").value === "1";
+        if (!budgetOnly) return entries;
+
+        const categoryById = new Map(state.categories.map((c) => [c.id, c]));
+        const accountById = new Map(state.accounts.map((a) => [a.id, a]));
+
+        return entries.filter((e) => {
+          const c = categoryById.get(e.category);
+          const a = accountById.get(e.account);
+          if (!c || !a) return false;
+          return (c.kind === "income" || c.kind === "expense") && a.type !== "virtual";
+        });
+      }
+
+      async function loadReferenceData() {
+        const [accounts, assets, categories] = await Promise.all([
+          listRecordsSafe("accounts", { filter: "is_archived = false", sort: "name", perPage: 500 }),
+          listRecordsSafe("assets", { sort: "symbol", perPage: 500 }),
+          listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 500 })
+        ]);
+        state.accounts = accounts;
+        state.assets = assets;
+        state.categories = categories;
+
+        refillFilterSelect("#fltAccount", state.accounts, "(all accounts)", (a) => (a.name || a.id) + " (" + (a.type || "other") + ")");
+        refillFilterSelect("#fltCategory", state.categories, "(all categories)", (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]");
+      }
+
+      async function loadRegister() {
+        const entriesFilter = buildEntriesFilter();
+        const entries = await listRecordsSafe("entries", {
+          filter: entriesFilter,
+          sort: "-ts",
+          perPage: 500
+        });
+
+        const filtered = filteredClientSide(entries);
+        state.entries = filtered;
+        state.txns = new Map();
+        const txnFilterParts = [];
+        const from = $("#fltFrom").value;
+        const to = $("#fltTo").value;
+        if (from) txnFilterParts.push('ts >= "' + from + ' 00:00:00Z"');
+        if (to) txnFilterParts.push('ts <= "' + to + ' 23:59:59Z"');
+        const txns = await listRecordsSafe("txns", {
+          filter: txnFilterParts.join(" && "),
+          sort: "-ts",
+          perPage: 500
+        });
+        txns.forEach((t) => state.txns.set(t.id, t));
+
+        renderRegister();
+      }
+
+      function renderRegister() {
+        const body = $("#registerBody");
+        const accountById = new Map(state.accounts.map((a) => [a.id, a]));
+        const categoryById = new Map(state.categories.map((c) => [c.id, c]));
+        const assetById = new Map(state.assets.map((a) => [a.id, a]));
+
+        body.innerHTML = "";
+        state.entries.forEach((e) => {
+          const t = state.txns.get(e.txn) || {};
+          const tr = document.createElement("tr");
+          if (state.selectedTxnId && e.txn === state.selectedTxnId) tr.classList.add("selected");
+
+          const qty = Number(e.qty);
+          const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
+
+          tr.innerHTML = [
+            "<td>" + escapeHtml(fmtIso(e.ts)) + "</td>",
+            "<td>" + escapeHtml(t.payee || "") + "</td>",
+            "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+            "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
+            "<td>" + escapeHtml((assetById.get(e.asset) || {}).symbol || e.asset || "") + "</td>",
+            "<td>" + escapeHtml(qtyTxt) + "</td>",
+            "<td>" + escapeHtml(e.status || "") + "</td>",
+            "<td class=\"mono\">" + escapeHtml(e.txn || "") + "</td>"
+          ].join("");
+
+          tr.addEventListener("click", function() {
+            state.selectedTxnId = e.txn || "";
+            const st = state.txns.get(state.selectedTxnId) || {};
+            $("#selectedMeta").textContent = state.selectedTxnId
+              ? ("Selected txn=" + state.selectedTxnId + " ts=" + fmtIso(st.ts) + " payee=" + (st.payee || "") + " source=" + (st.source || ""))
+              : "";
+            setBusy();
+            renderRegister();
+          });
+
+          body.appendChild(tr);
+        });
+
+        $("#resultCount").textContent = state.entries.length + " entries shown.";
+      }
+
+      function parseComposer() {
+        const tsRaw = $("#txnTs").value;
+        const payee = $("#txnPayee").value.trim();
+        const memo = $("#txnMemo").value.trim();
+        const source = $("#txnSource").value.trim();
+        const externalId = $("#txnExternal").value.trim();
+
+        if (!tsRaw) throw new Error("Timestamp is required.");
+        const ts = isoNoMs(tsRaw);
+
+        const rows = $$(".entryRow", $("#entryRows"));
+        if (rows.length < 1) throw new Error("At least one entry row is required.");
+
+        const entries = rows.map((row, idx) => {
+          const account = $('select[data-k="account"]', row).value;
+          const category = $('select[data-k="category"]', row).value;
+          const asset = $('select[data-k="asset"]', row).value;
+          const qtyRaw = $('input[data-k="qty"]', row).value.trim();
+          const status = $('select[data-k="status"]', row).value;
+          const ememo = $('input[data-k="memo"]', row).value.trim();
+
+          if (!account) throw new Error("Entry " + (idx + 1) + ": account is required.");
+          if (!asset) throw new Error("Entry " + (idx + 1) + ": asset is required.");
+          if (!status) throw new Error("Entry " + (idx + 1) + ": status is required.");
+          if (!qtyRaw) throw new Error("Entry " + (idx + 1) + ": qty is required.");
+
+          const qty = Number(qtyRaw);
+          if (!Number.isFinite(qty)) throw new Error("Entry " + (idx + 1) + ": qty must be numeric.");
+
+          const out = {
+            ts: ts,
+            account: account,
+            asset: asset,
+            qty: qty,
+            status: status
+          };
+          if (category) out.category = category;
+          if (ememo) out.memo = ememo;
+          return out;
+        });
+
+        const txn = { ts: ts };
+        if (payee) txn.payee = payee;
+        if (memo) txn.memo = memo;
+        if (source) txn.source = source;
+        if (externalId) txn.external_id = externalId;
+
+        return { txn: txn, entries: entries };
+      }
+
+      async function saveTransaction() {
+        if (!SESSION.token) return;
+        if (state.saving) return;
+        state.saving = true;
+        setBusy();
+
+        let createdTxnId = "";
+        const createdEntryIds = [];
+
+        try {
+          const payload = parseComposer();
+          const txn = await createRecord("txns", payload.txn);
+          createdTxnId = txn.id;
+
+          for (const entry of payload.entries) {
+            const rec = await createRecord("entries", Object.assign({}, entry, { txn: createdTxnId }));
+            createdEntryIds.push(rec.id);
+          }
+
+          setStatus("ok", "Saved transaction " + createdTxnId + " with " + createdEntryIds.length + " entries.");
+          clearComposer();
+          await refreshAll();
+        } catch (err) {
+          if (createdTxnId) {
+            for (const eid of createdEntryIds) {
+              try { await deleteRecord("entries", eid); } catch {}
+            }
+            try { await deleteRecord("txns", createdTxnId); } catch {}
+          }
+          const info = classifyError(err);
+          setStatus(info.kind, "Save failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.saving = false;
+          setBusy();
+        }
+      }
+
+      async function deleteSelectedTransaction() {
+        if (!SESSION.token || !state.selectedTxnId || state.deleting) return;
+        const txnId = state.selectedTxnId;
+        const yes = confirm("Delete txn " + txnId + " and all of its entries? This cannot be undone.");
+        if (!yes) return;
+
+        state.deleting = true;
+        setBusy();
+
+        try {
+          const rows = await listRecordsSafe("entries", { filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"', perPage: 500, sort: "-ts" });
+          for (const row of rows) {
+            await deleteRecord("entries", row.id);
+          }
+          await deleteRecord("txns", txnId);
+          state.selectedTxnId = "";
+          $("#selectedMeta").textContent = "";
+          setStatus("ok", "Deleted transaction " + txnId + " and " + rows.length + " related entries.");
+          await refreshAll();
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Delete failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.deleting = false;
+          setBusy();
+        }
+      }
+
+      function clearComposer() {
+        const now = new Date();
+        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        $("#txnTs").value = local;
+        $("#txnPayee").value = "";
+        $("#txnMemo").value = "";
+        $("#txnSource").value = "manual";
+        $("#txnExternal").value = "";
+        $("#entryRows").innerHTML = "";
+        addEntryRow();
+      }
+
+      async function refreshAll() {
+        if (!SESSION.token) return;
+        state.loading = true;
+        setBusy();
+
+        try {
+          await loadReferenceData();
+
+          const rows = $$(".entryRow", $("#entryRows"));
+          if (rows.length === 0) addEntryRow();
+          else {
+            const cachedRows = rows.map((r) => ({
+              account: $('select[data-k="account"]', r).value,
+              category: $('select[data-k="category"]', r).value,
+              asset: $('select[data-k="asset"]', r).value,
+              qty: $('input[data-k="qty"]', r).value,
+              status: $('select[data-k="status"]', r).value,
+              memo: $('input[data-k="memo"]', r).value
+            }));
+            $("#entryRows").innerHTML = "";
+            cachedRows.forEach((seed) => addEntryRow(seed));
+          }
+
+          await loadRegister();
+
+          setStatus("ok", "Loaded accounts/assets/categories and register entries.");
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Load failed: " + (err && err.message ? err.message : info.message));
+          if (err && err.kind === "auth") {
+            SESSION.token = "";
+            store.del("pbToken");
+            setAuthenticatedUI(false);
+          }
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      async function validateCachedSession() {
+        if (!SESSION.base || !SESSION.token) return false;
+        try {
+          const res = await authRefresh();
+          if (res && res.token) {
+            SESSION.token = res.token;
+            store.set("pbToken", res.token);
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      $("#btnLogin").addEventListener("click", async function() {
+        const base = $("#pbUrl").value.trim().replace(/\/+$/, "");
+        const email = $("#pbEmail").value.trim();
+        const password = $("#pbPass").value;
+
+        if (!base || !email || !password) {
+          setStatus("bad", "Login failed: URL, email, and password are required.");
+          return;
+        }
+
+        store.set("pbUrl", base);
+        store.set("pbEmail", email);
+
+        try {
+          $("#btnLogin").disabled = true;
+          SESSION.base = base;
+          SESSION.token = "";
+
+          const res = await authWithPassword(email, password);
+          if (!res || !res.token) throw new Error("No token returned by PocketBase.");
+
+          SESSION.token = res.token;
+          store.set("pbToken", res.token);
+          setAuthenticatedUI(true);
+          clearComposer();
+          setStatus("ok", "Login succeeded. Session saved in localStorage.");
+          await refreshAll();
+        } catch (err) {
+          SESSION.token = "";
+          store.del("pbToken");
+          setAuthenticatedUI(false);
+          const info = classifyError(err);
+          setStatus(info.kind, "Login failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          $("#btnLogin").disabled = false;
+          $("#pbPass").value = "";
+        }
+      });
+
+      $("#logoutLink").addEventListener("click", function(ev) {
+        ev.preventDefault();
+        SESSION.base = "";
+        SESSION.token = "";
+        store.del("pbUrl");
+        store.del("pbEmail");
+        store.del("pbToken");
+        $("#pbUrl").value = "";
+        $("#pbEmail").value = "";
+        $("#pbPass").value = "";
+        state.entries = [];
+        state.txns = new Map();
+        state.selectedTxnId = "";
+        $("#registerBody").innerHTML = "";
+        $("#selectedMeta").textContent = "";
+        $("#resultCount").textContent = "";
+        setAuthenticatedUI(false);
+        setStatus("ok", "Logged out. Local session cleared.");
+        setBusy();
+      });
+
+      $("#btnRefresh").addEventListener("click", refreshAll);
+      $("#btnAddEntry").addEventListener("click", function() { addEntryRow(); });
+      $("#btnSaveTxn").addEventListener("click", saveTransaction);
+      $("#btnDeleteTxn").addEventListener("click", deleteSelectedTransaction);
+
+      ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
+        $(sel).addEventListener("change", refreshAll);
+      });
+
+      $("#pbUrl").value = store.get("pbUrl", "");
+      $("#pbEmail").value = store.get("pbEmail", "");
+
+      (async function init() {
+        SESSION.base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+        SESSION.token = (store.get("pbToken", "") || "").trim();
+
+        if (SESSION.base && SESSION.token) {
+          const ok = await validateCachedSession();
+          if (ok) {
+            setAuthenticatedUI(true);
+            clearComposer();
+            setStatus("ok", "Session restored via auth-refresh.");
+            await refreshAll();
+            return;
+          }
+          SESSION.token = "";
+          store.del("pbToken");
+        }
+
+        setAuthenticatedUI(false);
+        setStatus("warn", "Not logged in. Enter URL, email, and password.");
+        clearComposer();
+        setBusy();
+      })();
+    })();
+  </script>
+</body>
+</html>
