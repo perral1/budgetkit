@@ -54,7 +54,7 @@
     }
     .field { display: flex; flex-direction: column; gap: 5px; }
     label { color: var(--muted); font-size: 12px; }
-    input[type="text"], input[type="password"], input[type="datetime-local"], input[type="date"], select, textarea {
+    input[type="text"], input[type="password"], input[type="date"], select, textarea {
       border: 1px solid var(--line);
       border-radius: 10px;
       background: rgba(23, 35, 53, 0.95);
@@ -138,6 +138,18 @@
     th, td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); padding: 9px 8px; font-size: 12px; text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.2px; }
     tr.selected { background: rgba(110, 193, 255, 0.08); }
+    tr.txn-parent td {
+      background: rgba(110, 193, 255, 0.06);
+      border-bottom: 0;
+      font-weight: 600;
+    }
+    tr.txn-sub td {
+      background: rgba(110, 193, 255, 0.03);
+      border-bottom: 0;
+    }
+    tr.txn-sub td:nth-child(3),
+    tr.txn-sub td:nth-child(4) { padding-left: 20px; }
+    tr.txn-sub-end td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); }
     .pill {
       border: 1px solid var(--line);
       border-radius: 999px;
@@ -190,8 +202,8 @@
           <h2>Compose Transaction</h2>
           <div class="composer">
             <div class="field c6">
-              <label for="txnTs">Timestamp *</label>
-              <input id="txnTs" type="datetime-local" />
+              <label for="txnDate">Date *</label>
+              <input id="txnDate" type="date" />
             </div>
             <div class="field c6">
               <label for="txnPayee">Payee</label>
@@ -271,7 +283,7 @@
             <table>
               <thead>
                 <tr>
-                  <th>TS</th>
+                  <th>Date</th>
                   <th>Payee</th>
                   <th>Account</th>
                   <th>Category</th>
@@ -324,15 +336,15 @@
           .replaceAll("'", "&#039;");
       }
 
-      function isoNoMs(dateObj) {
-        return new Date(dateObj).toISOString().replace(/\.\d{3}Z$/, "Z");
+      function normalizeDateToNoonUtc(dateStr) {
+        return dateStr + "T12:00:00Z";
       }
 
-      function fmtIso(ts) {
-        if (!ts) return "";
-        const d = new Date(ts);
-        if (isNaN(d.getTime())) return String(ts);
-        return d.toISOString().replace("T", " ").slice(0, 19) + "Z";
+      function fmtDate(dateValue) {
+        if (!dateValue) return "";
+        const d = new Date(dateValue);
+        if (isNaN(d.getTime())) return String(dateValue);
+        return d.toISOString().slice(0, 10);
       }
 
       function setStatus(kind, message) {
@@ -534,8 +546,8 @@
         if (account) out.push('account = "' + account.replaceAll('"', '\\"') + '"');
         if (category) out.push('category = "' + category.replaceAll('"', '\\"') + '"');
         if (status) out.push('status = "' + status.replaceAll('"', '\\"') + '"');
-        if (from) out.push('ts >= "' + from + ' 00:00:00Z"');
-        if (to) out.push('ts <= "' + to + ' 23:59:59Z"');
+        if (from) out.push('date >= "' + normalizeDateToNoonUtc(from) + '"');
+        if (to) out.push('date <= "' + normalizeDateToNoonUtc(to) + '"');
         return out.join(" && ");
       }
 
@@ -572,7 +584,7 @@
         const entriesFilter = buildEntriesFilter();
         const entries = await listRecordsSafe("entries", {
           filter: entriesFilter,
-          sort: "-ts",
+          sort: "-date",
           perPage: 500
         });
 
@@ -582,11 +594,11 @@
         const txnFilterParts = [];
         const from = $("#fltFrom").value;
         const to = $("#fltTo").value;
-        if (from) txnFilterParts.push('ts >= "' + from + ' 00:00:00Z"');
-        if (to) txnFilterParts.push('ts <= "' + to + ' 23:59:59Z"');
+        if (from) txnFilterParts.push('date >= "' + normalizeDateToNoonUtc(from) + '"');
+        if (to) txnFilterParts.push('date <= "' + normalizeDateToNoonUtc(to) + '"');
         const txns = await listRecordsSafe("txns", {
           filter: txnFilterParts.join(" && "),
-          sort: "-ts",
+          sort: "-date",
           perPage: 500
         });
         txns.forEach((t) => state.txns.set(t.id, t));
@@ -601,50 +613,115 @@
         const assetById = new Map(state.assets.map((a) => [a.id, a]));
 
         body.innerHTML = "";
+        const txnGroups = new Map();
+        const txnOrder = [];
         state.entries.forEach((e) => {
-          const t = state.txns.get(e.txn) || {};
-          const tr = document.createElement("tr");
-          if (state.selectedTxnId && e.txn === state.selectedTxnId) tr.classList.add("selected");
-
-          const qty = Number(e.qty);
-          const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
-
-          tr.innerHTML = [
-            "<td>" + escapeHtml(fmtIso(e.ts)) + "</td>",
-            "<td>" + escapeHtml(t.payee || "") + "</td>",
-            "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
-            "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
-            "<td>" + escapeHtml((assetById.get(e.asset) || {}).symbol || e.asset || "") + "</td>",
-            "<td>" + escapeHtml(qtyTxt) + "</td>",
-            "<td>" + escapeHtml(e.status || "") + "</td>",
-            "<td class=\"mono\">" + escapeHtml(e.txn || "") + "</td>"
-          ].join("");
-
-          tr.addEventListener("click", function() {
-            state.selectedTxnId = e.txn || "";
-            const st = state.txns.get(state.selectedTxnId) || {};
-            $("#selectedMeta").textContent = state.selectedTxnId
-              ? ("Selected txn=" + state.selectedTxnId + " ts=" + fmtIso(st.ts) + " payee=" + (st.payee || "") + " source=" + (st.source || ""))
-              : "";
-            setBusy();
-            renderRegister();
-          });
-
-          body.appendChild(tr);
+          const key = e.txn || "";
+          if (!txnGroups.has(key)) {
+            txnGroups.set(key, []);
+            txnOrder.push(key);
+          }
+          txnGroups.get(key).push(e);
         });
 
-        $("#resultCount").textContent = state.entries.length + " entries shown.";
+        function selectTxn(txnId) {
+          state.selectedTxnId = txnId || "";
+          const st = state.txns.get(state.selectedTxnId) || {};
+          $("#selectedMeta").textContent = state.selectedTxnId
+            ? ("Selected txn=" + state.selectedTxnId + " date=" + fmtDate(st.date) + " payee=" + (st.payee || "") + " source=" + (st.source || ""))
+            : "";
+          setBusy();
+          renderRegister();
+        }
+
+        txnOrder.forEach((txnId) => {
+          const group = txnGroups.get(txnId) || [];
+          const txn = state.txns.get(txnId) || {};
+          const isSelected = !!state.selectedTxnId && txnId === state.selectedTxnId;
+
+          if (group.length <= 1) {
+            const e = group[0];
+            if (!e) return;
+
+            const tr = document.createElement("tr");
+            if (isSelected) tr.classList.add("selected");
+
+            const qty = Number(e.qty);
+            const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
+
+            tr.innerHTML = [
+              "<td>" + escapeHtml(fmtDate(e.date)) + "</td>",
+              "<td>" + escapeHtml(txn.payee || "") + "</td>",
+              "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+              "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
+              "<td>" + escapeHtml((assetById.get(e.asset) || {}).symbol || e.asset || "") + "</td>",
+              "<td>" + escapeHtml(qtyTxt) + "</td>",
+              "<td>" + escapeHtml(e.status || "") + "</td>",
+              "<td class=\"mono\">" + escapeHtml(e.txn || "") + "</td>"
+            ].join("");
+
+            tr.addEventListener("click", function() { selectTxn(e.txn || ""); });
+            body.appendChild(tr);
+            return;
+          }
+
+          const totalQty = group.reduce((sum, e) => {
+            const q = Number(e.qty);
+            return Number.isFinite(q) ? (sum + q) : sum;
+          }, 0);
+          const totalTxt = totalQty.toLocaleString(undefined, { maximumFractionDigits: 8 });
+
+          const parentRow = document.createElement("tr");
+          parentRow.className = "txn-parent";
+          if (isSelected) parentRow.classList.add("selected");
+          parentRow.innerHTML = [
+            "<td>" + escapeHtml(fmtDate(txn.date || group[0].date)) + "</td>",
+            "<td>" + escapeHtml(txn.payee || "") + "</td>",
+            "<td></td>",
+            "<td></td>",
+            "<td></td>",
+            "<td>" + escapeHtml(totalTxt) + "</td>",
+            "<td></td>",
+            "<td></td>"
+          ].join("");
+          parentRow.addEventListener("click", function() { selectTxn(txnId); });
+          body.appendChild(parentRow);
+
+          group.forEach((e, idx) => {
+            const tr = document.createElement("tr");
+            tr.className = "txn-sub" + (idx === group.length - 1 ? " txn-sub-end" : "");
+            if (isSelected) tr.classList.add("selected");
+
+            const qty = Number(e.qty);
+            const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
+            tr.innerHTML = [
+              "<td></td>",
+              "<td></td>",
+              "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+              "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
+              "<td></td>",
+              "<td>" + escapeHtml(qtyTxt) + "</td>",
+              "<td>" + escapeHtml(e.status || "") + "</td>",
+              "<td></td>"
+            ].join("");
+
+            tr.addEventListener("click", function() { selectTxn(txnId); });
+            body.appendChild(tr);
+          });
+        });
+
+        $("#resultCount").textContent = state.entries.length + " entries shown across " + txnOrder.length + " transactions.";
       }
 
       function parseComposer() {
-        const tsRaw = $("#txnTs").value;
+        const dateRaw = $("#txnDate").value;
         const payee = $("#txnPayee").value.trim();
         const memo = $("#txnMemo").value.trim();
         const source = $("#txnSource").value.trim();
         const externalId = $("#txnExternal").value.trim();
 
-        if (!tsRaw) throw new Error("Timestamp is required.");
-        const ts = isoNoMs(tsRaw);
+        if (!dateRaw) throw new Error("Date is required.");
+        const normalizedDate = normalizeDateToNoonUtc(dateRaw);
 
         const rows = $$(".entryRow", $("#entryRows"));
         if (rows.length < 1) throw new Error("At least one entry row is required.");
@@ -666,7 +743,7 @@
           if (!Number.isFinite(qty)) throw new Error("Entry " + (idx + 1) + ": qty must be numeric.");
 
           const out = {
-            ts: ts,
+            date: normalizedDate,
             account: account,
             asset: asset,
             qty: qty,
@@ -677,7 +754,7 @@
           return out;
         });
 
-        const txn = { ts: ts };
+        const txn = { date: normalizedDate };
         if (payee) txn.payee = payee;
         if (memo) txn.memo = memo;
         if (source) txn.source = source;
@@ -733,7 +810,7 @@
         setBusy();
 
         try {
-          const rows = await listRecordsSafe("entries", { filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"', perPage: 500, sort: "-ts" });
+          const rows = await listRecordsSafe("entries", { filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"', perPage: 500, sort: "-date" });
           for (const row of rows) {
             await deleteRecord("entries", row.id);
           }
@@ -753,8 +830,8 @@
 
       function clearComposer() {
         const now = new Date();
-        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-        $("#txnTs").value = local;
+        const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+        $("#txnDate").value = localDate;
         $("#txnPayee").value = "";
         $("#txnMemo").value = "";
         $("#txnSource").value = "manual";

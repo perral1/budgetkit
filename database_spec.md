@@ -9,6 +9,7 @@ This file is the authoritative data contract for BudgetKit modules.
 - No double-entry accounting: transactions are not required to globally balance.
 - Envelope budgeting: every dollar of net income is assigned to a budget category.
 - Starting balances are represented as normal transactions.
+- Transaction dates are date-only semantics, stored as datetime normalized to `12:00:00Z`.
 - Budgeting is always in the default/base currency.
 - Modules should not depend on joins for hot paths; use indexed filters.
 
@@ -76,7 +77,7 @@ Indexes:
 Transaction header that groups one or more entries.
 
 Fields:
-- `ts` (datetime, required)
+- `date` (datetime, required; normalized to `12:00:00Z`)
 - `memo` (text, optional)
 - `payee` (text, optional)
 - `source` (text, optional, e.g. `manual`, `import:schwab`)
@@ -84,7 +85,7 @@ Fields:
 - `meta` (json)
 
 Indexes:
-- `ts`
+- `date`
 - unique `external_id` (recommended; may include source prefix)
 
 ### 2.5 `entries`
@@ -93,7 +94,7 @@ Primary economic-effect table.
 
 Fields:
 - `txn` (relation -> `txns`, required)
-- `ts` (datetime, required; copied from `txns.ts`)
+- `date` (datetime, required; copied from `txns.date`, normalized to `12:00:00Z`)
 - `account` (relation -> `accounts`, required)
 - `category` (relation -> `categories`, optional but recommended)
 - `asset` (relation -> `assets`, required; default `USD`)
@@ -103,10 +104,10 @@ Fields:
 - `meta` (json)
 
 Indexes (critical):
-- composite (`account`, `ts`)
-- composite (`category`, `ts`)
-- composite (`asset`, `ts`)
-- composite (`status`, `ts`)
+- composite (`account`, `date`)
+- composite (`category`, `date`)
+- composite (`asset`, `date`)
+- composite (`status`, `date`)
 - (`txn`)
 
 ### 2.6 `budget_lines`
