@@ -257,32 +257,29 @@
           <div style="overflow:auto;">
             <table>
               <colgroup>
-                <col style="width:12%;" />
+                <col style="width:11%;" />
+                <col style="width:18%;" />
                 <col style="width:14%;" />
                 <col style="width:16%;" />
-                <col style="width:16%;" />
+                <col style="width:17%;" />
+                <col style="width:13%;" />
                 <col style="width:9%;" />
-                <col style="width:10%;" />
-                <col style="width:9%;" />
-                <col style="width:14%;" />
               </colgroup>
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Payee</th>
                   <th>Account</th>
+                  <th>Payee</th>
                   <th>Category</th>
-                  <th>Asset</th>
-                  <th>Qty</th>
-                  <th>Status</th>
                   <th>Memo</th>
+                  <th>Amount</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody id="registerBody"></tbody>
             </table>
           </div>
           <div class="help" id="resultCount" style="margin-top:10px;"></div>
-          <div class="mono" id="selectedMeta" style="margin-top:8px;"></div>
         </section>
       </div>
     </div>
@@ -598,17 +595,21 @@
         return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       }
 
+      function getUsdAssetId() {
+        const usd = state.assets.find((a) => String(a.symbol || "").toUpperCase() === "USD");
+        return usd ? usd.id : "";
+      }
+
       function focusKeyFromDblClickEvent(ev) {
         const td = ev && ev.target ? ev.target.closest("td") : null;
         const idx = td ? td.cellIndex : 0;
         if (idx === 0) return "txn-date";
-        if (idx === 1) return "txn-payee";
-        if (idx === 2) return "entry-account";
+        if (idx === 1) return "entry-account";
+        if (idx === 2) return "txn-payee";
         if (idx === 3) return "entry-category";
-        if (idx === 4) return "entry-asset";
+        if (idx === 4) return "txn-memo";
         if (idx === 5) return "entry-qty";
         if (idx === 6) return "entry-status";
-        if (idx === 7) return "txn-memo";
         return "txn-date";
       }
 
@@ -647,14 +648,12 @@
 
           const accountSorted = sortedCopyByLabel(state.accounts, (a) => (a.name || a.id || ""));
           const categorySorted = sortedCopyByLabel(state.categories, (c) => (c.name || c.id || ""));
-          const assetSorted = sortedCopyByLabel(state.assets, (a) => (a.symbol || a.id || ""));
-          const usdAsset = state.assets.find((a) => String(a.symbol || "").toUpperCase() === "USD");
+          const usdAssetId = getUsdAssetId();
 
           const defaultAccount = accountSorted[0] ? accountSorted[0].id : "";
           const defaultCategory = categorySorted[0] ? categorySorted[0].id : "";
-          const defaultAsset = usdAsset ? usdAsset.id : (assetSorted[0] ? assetSorted[0].id : "");
           if (!defaultAccount) throw new Error("No account available for default selection.");
-          if (!defaultAsset) throw new Error("No asset available for default selection.");
+          if (!usdAssetId) throw new Error("USD asset was not found.");
 
           const normalizedDate = normalizeDateToNoonUtc(localTodayYmd());
           const txn = await createRecord("txns", {
@@ -667,7 +666,7 @@
             date: normalizedDate,
             account: defaultAccount,
             category: defaultCategory || null,
-            asset: defaultAsset,
+            asset: usdAssetId,
             qty: 0,
             status: "pending"
           });
@@ -698,8 +697,8 @@
         if (!SESSION.token || !txnId) return;
         if (state.loading || state.saving || state.deleting) return;
         if (state.editingTxnId && state.editingTxnId !== txnId) {
-          setStatus("warn", "Finish or cancel the current inline edit before editing another transaction.");
-          return;
+          const ok = await saveInlineEdit();
+          if (!ok) return;
         }
         if (state.editingTxnId === txnId) {
           state.pendingFocusKey = focusKey || "txn-date";
@@ -740,11 +739,11 @@
       }
 
       async function saveInlineEdit() {
-        if (!state.editingTxnId || !state.editDraft || !SESSION.token) return;
-        if (state.saving) return;
+        if (!state.editingTxnId || !state.editDraft || !SESSION.token) return false;
+        if (state.saving) return false;
         const txnId = state.editingTxnId;
         const root = $('#registerBody tr[data-edit-root="1"]');
-        if (!root) return;
+        if (!root) return false;
         let normalizedDate = "";
         let payee = null;
         let memo = null;
@@ -756,29 +755,29 @@
           memo = fieldOrNull($('input[data-edit="txn-memo"]', root).value);
           if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) throw new Error("Date must be in YYYY-MM-DD format.");
           normalizedDate = normalizeDateToNoonUtc(dateRaw);
+          const usdAssetId = getUsdAssetId();
+          if (!usdAssetId) throw new Error("USD asset was not found.");
 
           const entryRows = $$('tr[data-edit-entry="1"]', $("#registerBody"));
           for (const row of entryRows) {
             const entryId = row.getAttribute("data-entry-id") || "";
             const account = $('select[data-edit="entry-account"]', row).value;
             const category = $('select[data-edit="entry-category"]', row).value;
-            const asset = $('select[data-edit="entry-asset"]', row).value;
             const qtyRaw = $('input[data-edit="entry-qty"]', row).value.trim();
             const status = $('select[data-edit="entry-status"]', row).value;
 
             if (!entryId) throw new Error("Entry id missing in edit row.");
             if (!account) throw new Error("Account is required for all entries.");
-            if (!asset) throw new Error("Asset is required for all entries.");
             if (!status) throw new Error("Status is required for all entries.");
-            if (!qtyRaw) throw new Error("Qty is required for all entries.");
+            if (!qtyRaw) throw new Error("Amount is required for all entries.");
             const qty = Number(qtyRaw);
-            if (!Number.isFinite(qty)) throw new Error("Qty must be numeric for all entries.");
+            if (!Number.isFinite(qty)) throw new Error("Amount must be numeric for all entries.");
 
             const body = {
               date: normalizedDate,
               account: account,
               category: category || null,
-              asset: asset,
+              asset: usdAssetId,
               qty: qty,
               status: status
             };
@@ -786,7 +785,7 @@
           }
         } catch (err) {
           setStatus("bad", "Save failed: " + (err && err.message ? err.message : String(err)));
-          return;
+          return false;
         }
 
         try {
@@ -805,9 +804,11 @@
           state.pendingFocusKey = "";
           setStatus("ok", "Transaction " + txnId + " updated.");
           await refreshAll();
+          return true;
         } catch (err) {
           const info = classifyError(err);
           setStatus(info.kind, "Save edit failed: " + (err && err.message ? err.message : info.message));
+          return false;
         } finally {
           state.saving = false;
           setBusy();
@@ -818,7 +819,6 @@
         const body = $("#registerBody");
         const accountById = new Map(state.accounts.map((a) => [a.id, a]));
         const categoryById = new Map(state.categories.map((c) => [c.id, c]));
-        const assetById = new Map(state.assets.map((a) => [a.id, a]));
 
         body.innerHTML = "";
         const txnGroups = new Map();
@@ -833,11 +833,8 @@
         });
 
         function selectTxn(txnId) {
+          if (state.editingTxnId) return;
           state.selectedTxnId = txnId || "";
-          const st = state.txns.get(state.selectedTxnId) || {};
-          $("#selectedMeta").textContent = state.selectedTxnId
-            ? ("Selected txn=" + state.selectedTxnId + " date=" + fmtDate(st.date) + " payee=" + (st.payee || "") + " source=" + (st.source || ""))
-            : "";
           setBusy();
           renderRegister();
         }
@@ -861,13 +858,12 @@
               trSingle.setAttribute("data-entry-id", String(e.id || ""));
               trSingle.innerHTML = [
                 '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
-                '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
+                '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
-                '<td><select class="inlineSelect" data-edit="entry-asset">' + optionList(state.assets, e.asset, (a) => (a.symbol || a.id), false) + "</select></td>",
+                '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>',
-                '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>'
+                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
               ].join("");
               body.appendChild(trSingle);
               return;
@@ -878,13 +874,12 @@
             trTxn.setAttribute("data-edit-root", "1");
             trTxn.innerHTML = [
               '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date)) + '" /></td>',
+              "<td></td>",
               '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
               "<td></td>",
+              '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
               "<td></td>",
-              "<td></td>",
-              "<td></td>",
-              "<td></td>",
-              '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>'
+              "<td></td>"
             ].join("");
             body.appendChild(trTxn);
 
@@ -895,13 +890,12 @@
               trE.setAttribute("data-entry-id", String(e.id || ""));
               trE.innerHTML = [
                 "<td></td>",
-                "<td></td>",
                 '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
+                "<td></td>",
                 '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
-                '<td><select class="inlineSelect" data-edit="entry-asset">' + optionList(state.assets, e.asset, (a) => (a.symbol || a.id), false) + "</select></td>",
+                "<td></td>",
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>',
-                "<td></td>"
+                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
               ].join("");
               body.appendChild(trE);
             });
@@ -920,13 +914,12 @@
 
             tr.innerHTML = [
               "<td>" + escapeHtml(fmtDate(e.date)) + "</td>",
-              "<td>" + escapeHtml(txn.payee || "") + "</td>",
               "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+              "<td>" + escapeHtml(txn.payee || "") + "</td>",
               "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
-              "<td>" + escapeHtml((assetById.get(e.asset) || {}).symbol || e.asset || "") + "</td>",
+              "<td>" + escapeHtml(txn.memo || "") + "</td>",
               "<td>" + escapeHtml(qtyTxt) + "</td>",
-              "<td>" + escapeHtml(e.status || "") + "</td>",
-              "<td>" + escapeHtml(txn.memo || "") + "</td>"
+              "<td>" + escapeHtml(e.status || "") + "</td>"
             ].join("");
 
             tr.addEventListener("click", function() { selectTxn(e.txn || ""); });
@@ -946,13 +939,12 @@
           if (isSelected) parentRow.classList.add("selected");
           parentRow.innerHTML = [
             "<td>" + escapeHtml(fmtDate(txn.date || group[0].date)) + "</td>",
+            "<td></td>",
             "<td>" + escapeHtml(txn.payee || "") + "</td>",
             "<td></td>",
-            "<td></td>",
-            "<td></td>",
+            "<td>" + escapeHtml(txn.memo || "") + "</td>",
             "<td>" + escapeHtml(totalTxt) + "</td>",
-            "<td></td>",
-            "<td>" + escapeHtml(txn.memo || "") + "</td>"
+            "<td></td>"
           ].join("");
           parentRow.addEventListener("click", function() { selectTxn(txnId); });
           parentRow.addEventListener("dblclick", function(ev) { startInlineEdit(txnId, focusKeyFromDblClickEvent(ev)); });
@@ -967,13 +959,12 @@
             const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
             tr.innerHTML = [
               "<td></td>",
-              "<td></td>",
               "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+              "<td></td>",
               "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
               "<td></td>",
               "<td>" + escapeHtml(qtyTxt) + "</td>",
-              "<td>" + escapeHtml(e.status || "") + "</td>",
-              "<td></td>"
+              "<td>" + escapeHtml(e.status || "") + "</td>"
             ].join("");
 
             tr.addEventListener("click", function() { selectTxn(txnId); });
@@ -1002,7 +993,6 @@
           }
           await deleteRecord("txns", txnId);
           state.selectedTxnId = "";
-          $("#selectedMeta").textContent = "";
           setStatus("ok", "Deleted transaction " + txnId + " and " + rows.length + " related entries.");
           await refreshAll();
         } catch (err) {
@@ -1109,7 +1099,6 @@
         state.editingTxnId = "";
         state.editDraft = null;
         $("#registerBody").innerHTML = "";
-        $("#selectedMeta").textContent = "";
         $("#resultCount").textContent = "";
         setAuthenticatedUI(false);
         setStatus("ok", "Logged out. Local session cleared.");
@@ -1127,8 +1116,13 @@
       });
 
       $("#registerBody").addEventListener("keydown", function(e) {
-        if (e.key !== "Enter") return;
         if (!state.editingTxnId) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancelInlineEdit();
+          return;
+        }
+        if (e.key !== "Enter") return;
         const t = e.target;
         if (!t || !(t.matches("input") || t.matches("select"))) return;
         e.preventDefault();
