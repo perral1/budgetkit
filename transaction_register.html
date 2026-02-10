@@ -111,8 +111,17 @@
       align-items: center;
       margin-bottom: 10px;
     }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); padding: 9px 8px; font-size: 12px; text-align: left; vertical-align: top; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td {
+      border-bottom: 1px solid rgba(42, 58, 82, 0.75);
+      padding: 9px 8px;
+      font-size: 12px;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.2px; }
     tr.selected { background: rgba(110, 193, 255, 0.08); }
     tr.txn-parent td {
@@ -130,17 +139,28 @@
     tr.txn-edit td {
       background: rgba(255, 212, 121, 0.08);
       border-bottom: 0;
+      vertical-align: middle;
     }
     tr.txn-edit-end td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); }
     .inlineInput, .inlineSelect {
       width: 100%;
       min-width: 0;
+      height: 30px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: rgba(23, 35, 53, 0.95);
       color: var(--text);
-      padding: 6px 8px;
+      padding: 5px 8px;
+      margin: 0;
       font-size: 12px;
+      line-height: 1.2;
+      box-sizing: border-box;
+      display: block;
+    }
+    .inlineSelect {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
     }
     .pill {
       border: 1px solid var(--line);
@@ -236,6 +256,16 @@
 
           <div style="overflow:auto;">
             <table>
+              <colgroup>
+                <col style="width:12%;" />
+                <col style="width:14%;" />
+                <col style="width:16%;" />
+                <col style="width:16%;" />
+                <col style="width:9%;" />
+                <col style="width:10%;" />
+                <col style="width:9%;" />
+                <col style="width:14%;" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Date</th>
@@ -281,7 +311,8 @@
         entries: [],
         selectedTxnId: "",
         editingTxnId: "",
-        editDraft: null
+        editDraft: null,
+        pendingFocusKey: ""
       };
 
       function escapeHtml(v) {
@@ -567,6 +598,35 @@
         return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       }
 
+      function focusKeyFromDblClickEvent(ev) {
+        const td = ev && ev.target ? ev.target.closest("td") : null;
+        const idx = td ? td.cellIndex : 0;
+        if (idx === 0) return "txn-date";
+        if (idx === 1) return "txn-payee";
+        if (idx === 2) return "entry-account";
+        if (idx === 3) return "entry-category";
+        if (idx === 4) return "entry-asset";
+        if (idx === 5) return "entry-qty";
+        if (idx === 6) return "entry-status";
+        if (idx === 7) return "txn-memo";
+        return "txn-date";
+      }
+
+      function applyPendingInlineFocus() {
+        if (!state.editingTxnId || !state.pendingFocusKey) return;
+        const key = state.pendingFocusKey;
+        const selector = '[data-edit="' + key + '"]';
+        requestAnimationFrame(function() {
+          const el = $("#registerBody " + selector);
+          if (!el) return;
+          try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+          if (el.tagName === "INPUT" && el.type !== "date") {
+            try { el.select(); } catch {}
+          }
+          state.pendingFocusKey = "";
+        });
+      }
+
       async function startNewInlineEdit() {
         if (!SESSION.token) return;
         if (state.loading || state.saving || state.deleting) return;
@@ -616,6 +676,7 @@
           state.selectedTxnId = txn.id;
           state.editingTxnId = txn.id;
           state.editDraft = { txn: txn, entries: [entry] };
+          state.pendingFocusKey = "txn-date";
           setStatus("warn", "Created new transaction and opened inline edit mode.");
           await loadRegister();
         } catch (err) {
@@ -633,14 +694,18 @@
         }
       }
 
-      async function startInlineEdit(txnId) {
+      async function startInlineEdit(txnId, focusKey) {
         if (!SESSION.token || !txnId) return;
         if (state.loading || state.saving || state.deleting) return;
         if (state.editingTxnId && state.editingTxnId !== txnId) {
           setStatus("warn", "Finish or cancel the current inline edit before editing another transaction.");
           return;
         }
-        if (state.editingTxnId === txnId) return;
+        if (state.editingTxnId === txnId) {
+          state.pendingFocusKey = focusKey || "txn-date";
+          applyPendingInlineFocus();
+          return;
+        }
         try {
           state.loading = true;
           setBusy();
@@ -653,6 +718,7 @@
           state.editingTxnId = txnId;
           state.selectedTxnId = txnId;
           state.editDraft = { txn: txn, entries: entries };
+          state.pendingFocusKey = focusKey || "txn-date";
           setStatus("warn", "Inline edit mode: update fields, then Save Edit or Cancel.");
           renderRegister();
         } catch (err) {
@@ -667,6 +733,7 @@
       function cancelInlineEdit() {
         state.editingTxnId = "";
         state.editDraft = null;
+        state.pendingFocusKey = "";
         setStatus("ok", "Edit canceled.");
         renderRegister();
         setBusy();
@@ -684,10 +751,10 @@
         const updates = [];
 
         try {
-          const dateRaw = $('input[data-edit="txn-date"]', root).value;
+          const dateRaw = $('input[data-edit="txn-date"]', root).value.trim();
           payee = fieldOrNull($('input[data-edit="txn-payee"]', root).value);
           memo = fieldOrNull($('input[data-edit="txn-memo"]', root).value);
-          if (!dateRaw) throw new Error("Date is required.");
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) throw new Error("Date must be in YYYY-MM-DD format.");
           normalizedDate = normalizeDateToNoonUtc(dateRaw);
 
           const entryRows = $$('tr[data-edit-entry="1"]', $("#registerBody"));
@@ -735,6 +802,7 @@
           }
           state.editingTxnId = "";
           state.editDraft = null;
+          state.pendingFocusKey = "";
           setStatus("ok", "Transaction " + txnId + " updated.");
           await refreshAll();
         } catch (err) {
@@ -792,7 +860,7 @@
               trSingle.setAttribute("data-edit-entry", "1");
               trSingle.setAttribute("data-entry-id", String(e.id || ""));
               trSingle.innerHTML = [
-                '<td><input class="inlineInput" data-edit="txn-date" type="date" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
+                '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
                 '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
                 '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
@@ -809,7 +877,7 @@
             trTxn.className = "txn-edit";
             trTxn.setAttribute("data-edit-root", "1");
             trTxn.innerHTML = [
-              '<td><input class="inlineInput" data-edit="txn-date" type="date" value="' + escapeHtml(fmtDate(draftTxn.date)) + '" /></td>',
+              '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date)) + '" /></td>',
               '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
               "<td></td>",
               "<td></td>",
@@ -862,7 +930,7 @@
             ].join("");
 
             tr.addEventListener("click", function() { selectTxn(e.txn || ""); });
-            tr.addEventListener("dblclick", function() { startInlineEdit(e.txn || ""); });
+            tr.addEventListener("dblclick", function(ev) { startInlineEdit(e.txn || "", focusKeyFromDblClickEvent(ev)); });
             body.appendChild(tr);
             return;
           }
@@ -887,7 +955,7 @@
             "<td>" + escapeHtml(txn.memo || "") + "</td>"
           ].join("");
           parentRow.addEventListener("click", function() { selectTxn(txnId); });
-          parentRow.addEventListener("dblclick", function() { startInlineEdit(txnId); });
+          parentRow.addEventListener("dblclick", function(ev) { startInlineEdit(txnId, focusKeyFromDblClickEvent(ev)); });
           body.appendChild(parentRow);
 
           group.forEach((e, idx) => {
@@ -909,11 +977,12 @@
             ].join("");
 
             tr.addEventListener("click", function() { selectTxn(txnId); });
-            tr.addEventListener("dblclick", function() { startInlineEdit(txnId); });
+            tr.addEventListener("dblclick", function(ev) { startInlineEdit(txnId, focusKeyFromDblClickEvent(ev)); });
             body.appendChild(tr);
           });
         });
 
+        applyPendingInlineFocus();
         $("#resultCount").textContent = state.entries.length + " entries shown across " + txnOrder.length + " transactions. Double-click a transaction row to edit inline.";
       }
 
