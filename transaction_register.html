@@ -306,7 +306,9 @@
         categories: [],
         txns: new Map(),
         entries: [],
-        selectedTxnId: "",
+        selectedTxnIds: [],
+        selectionAnchorTxnId: "",
+        visibleTxnOrder: [],
         editingTxnId: "",
         editDraft: null,
         pendingFocusKey: ""
@@ -482,7 +484,7 @@
           const el = $(sel);
           if (el) el.disabled = disabled;
         });
-        const canDelete = !!SESSION.token && !!state.selectedTxnId && !state.loading && !state.saving && !state.deleting && !editing;
+        const canDelete = !!SESSION.token && state.selectedTxnIds.length > 0 && !state.loading && !state.saving && !state.deleting && !editing;
         $("#btnDeleteTxn").disabled = !canDelete;
         const btnEditSave = $("#btnEditSave");
         const btnEditCancel = $("#btnEditCancel");
@@ -672,7 +674,8 @@
           });
           createdEntryId = entry.id;
 
-          state.selectedTxnId = txn.id;
+          state.selectedTxnIds = [txn.id];
+          state.selectionAnchorTxnId = txn.id;
           state.editingTxnId = txn.id;
           state.editDraft = { txn: txn, entries: [entry] };
           state.pendingFocusKey = "txn-date";
@@ -715,7 +718,8 @@
             perPage: 500
           });
           state.editingTxnId = txnId;
-          state.selectedTxnId = txnId;
+          state.selectedTxnIds = [txnId];
+          state.selectionAnchorTxnId = txnId;
           state.editDraft = { txn: txn, entries: entries };
           state.pendingFocusKey = focusKey || "txn-date";
           setStatus("warn", "Inline edit mode: update fields, then Save Edit or Cancel.");
@@ -831,10 +835,46 @@
           }
           txnGroups.get(key).push(e);
         });
+        state.visibleTxnOrder = txnOrder.slice();
+        const orderSet = new Set(txnOrder);
+        state.selectedTxnIds = state.selectedTxnIds.filter((id) => orderSet.has(id));
+        if (state.selectionAnchorTxnId && !orderSet.has(state.selectionAnchorTxnId)) {
+          state.selectionAnchorTxnId = state.selectedTxnIds[0] || "";
+        }
+        const selectedSet = new Set(state.selectedTxnIds);
 
-        function selectTxn(txnId) {
+        function selectTxn(txnId, ev) {
           if (state.editingTxnId) return;
-          state.selectedTxnId = txnId || "";
+          const order = state.visibleTxnOrder || [];
+          const selected = new Set(state.selectedTxnIds);
+          const isToggle = !!(ev && (ev.metaKey || ev.ctrlKey));
+          const isRange = !!(ev && ev.shiftKey);
+
+          if (isRange && state.selectionAnchorTxnId) {
+            const a = order.indexOf(state.selectionAnchorTxnId);
+            const b = order.indexOf(txnId);
+            if (a !== -1 && b !== -1) {
+              const start = Math.min(a, b);
+              const end = Math.max(a, b);
+              const range = order.slice(start, end + 1);
+              if (!isToggle) selected.clear();
+              range.forEach((id) => selected.add(id));
+            } else {
+              if (!isToggle) selected.clear();
+              selected.add(txnId);
+            }
+          } else if (isToggle) {
+            if (selected.has(txnId)) selected.delete(txnId);
+            else selected.add(txnId);
+            state.selectionAnchorTxnId = txnId;
+          } else {
+            selected.clear();
+            selected.add(txnId);
+            state.selectionAnchorTxnId = txnId;
+          }
+
+          if (!state.selectionAnchorTxnId && txnId) state.selectionAnchorTxnId = txnId;
+          state.selectedTxnIds = Array.from(selected);
           setBusy();
           renderRegister();
         }
@@ -842,7 +882,7 @@
         txnOrder.forEach((txnId) => {
           const group = txnGroups.get(txnId) || [];
           const txn = state.txns.get(txnId) || {};
-          const isSelected = !!state.selectedTxnId && txnId === state.selectedTxnId;
+          const isSelected = selectedSet.has(txnId);
 
           if (state.editingTxnId && state.editingTxnId === txnId && state.editDraft) {
             const draftTxn = state.editDraft.txn || {};
@@ -922,7 +962,7 @@
               "<td>" + escapeHtml(e.status || "") + "</td>"
             ].join("");
 
-            tr.addEventListener("click", function() { selectTxn(e.txn || ""); });
+            tr.addEventListener("click", function(ev) { selectTxn(e.txn || "", ev); });
             tr.addEventListener("dblclick", function(ev) { startInlineEdit(e.txn || "", focusKeyFromDblClickEvent(ev)); });
             body.appendChild(tr);
             return;
@@ -946,7 +986,7 @@
             "<td>" + escapeHtml(totalTxt) + "</td>",
             "<td></td>"
           ].join("");
-          parentRow.addEventListener("click", function() { selectTxn(txnId); });
+          parentRow.addEventListener("click", function(ev) { selectTxn(txnId, ev); });
           parentRow.addEventListener("dblclick", function(ev) { startInlineEdit(txnId, focusKeyFromDblClickEvent(ev)); });
           body.appendChild(parentRow);
 
@@ -967,7 +1007,7 @@
               "<td>" + escapeHtml(e.status || "") + "</td>"
             ].join("");
 
-            tr.addEventListener("click", function() { selectTxn(txnId); });
+            tr.addEventListener("click", function(ev) { selectTxn(txnId, ev); });
             tr.addEventListener("dblclick", function(ev) { startInlineEdit(txnId, focusKeyFromDblClickEvent(ev)); });
             body.appendChild(tr);
           });
@@ -978,22 +1018,38 @@
       }
 
       async function deleteSelectedTransaction() {
-        if (!SESSION.token || !state.selectedTxnId || state.deleting) return;
-        const txnId = state.selectedTxnId;
-        const yes = confirm("Delete txn " + txnId + " and all of its entries? This cannot be undone.");
+        if (!SESSION.token || state.selectedTxnIds.length < 1 || state.deleting) return;
+        const txnIds = state.selectedTxnIds.slice();
+        const yes = confirm("Delete " + txnIds.length + " selected transaction(s) and their entries? This cannot be undone.");
         if (!yes) return;
 
         state.deleting = true;
         setBusy();
 
+        let deletedTxns = 0;
+        let deletedEntries = 0;
+        const failed = [];
         try {
-          const rows = await listRecordsSafe("entries", { filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"', perPage: 500, sort: "-date" });
-          for (const row of rows) {
-            await deleteRecord("entries", row.id);
+          for (const txnId of txnIds) {
+            try {
+              const rows = await listRecordsSafe("entries", { filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"', perPage: 500, sort: "-date" });
+              for (const row of rows) {
+                await deleteRecord("entries", row.id);
+                deletedEntries += 1;
+              }
+              await deleteRecord("txns", txnId);
+              deletedTxns += 1;
+            } catch {
+              failed.push(txnId);
+            }
           }
-          await deleteRecord("txns", txnId);
-          state.selectedTxnId = "";
-          setStatus("ok", "Deleted transaction " + txnId + " and " + rows.length + " related entries.");
+          state.selectedTxnIds = failed.slice();
+          state.selectionAnchorTxnId = state.selectedTxnIds[0] || "";
+          if (failed.length > 0) {
+            setStatus("warn", "Deleted " + deletedTxns + " txn(s), " + deletedEntries + " entries. Failed: " + failed.join(", "));
+          } else {
+            setStatus("ok", "Deleted " + deletedTxns + " txn(s) and " + deletedEntries + " related entries.");
+          }
           await refreshAll();
         } catch (err) {
           const info = classifyError(err);
@@ -1095,7 +1151,9 @@
         $("#pbPass").value = "";
         state.entries = [];
         state.txns = new Map();
-        state.selectedTxnId = "";
+        state.selectedTxnIds = [];
+        state.selectionAnchorTxnId = "";
+        state.visibleTxnOrder = [];
         state.editingTxnId = "";
         state.editDraft = null;
         $("#registerBody").innerHTML = "";
