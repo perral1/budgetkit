@@ -97,34 +97,11 @@
     .status.warn { border-color: rgba(255, 212, 121, 0.45); color: #ffeabc; }
     .status.bad { border-color: rgba(255, 127, 127, 0.45); color: #ffd1d1; }
     #app { display: none; margin-top: 12px; }
-    .grid { display: grid; grid-template-columns: 420px 1fr; gap: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
     .panel { padding: 12px; }
     .panel h2 { margin: 0 0 10px; font-size: 14px; }
     .line { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
     .line .field { min-width: 110px; }
-    .composer {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(12, 1fr);
-    }
-    .c12 { grid-column: span 12; }
-    .c6 { grid-column: span 6; }
-    .c4 { grid-column: span 4; }
-    .c3 { grid-column: span 3; }
-    .entryRow {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
-      background: rgba(15, 24, 36, 0.95);
-      display: grid;
-      gap: 8px;
-      grid-template-columns: repeat(12, 1fr);
-      margin-top: 8px;
-    }
-    .entryRow .c2 { grid-column: span 2; }
-    .entryRow .c3 { grid-column: span 3; }
-    .entryRow .c4 { grid-column: span 4; }
-    .entryRow .c12 { grid-column: span 12; }
     .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
     .toolbar {
       display: flex;
@@ -150,6 +127,21 @@
     tr.txn-sub td:nth-child(3),
     tr.txn-sub td:nth-child(4) { padding-left: 20px; }
     tr.txn-sub-end td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); }
+    tr.txn-edit td {
+      background: rgba(255, 212, 121, 0.08);
+      border-bottom: 0;
+    }
+    tr.txn-edit-end td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); }
+    .inlineInput, .inlineSelect {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(23, 35, 53, 0.95);
+      color: var(--text);
+      padding: 6px 8px;
+      font-size: 12px;
+    }
     .pill {
       border: 1px solid var(--line);
       border-radius: 999px;
@@ -163,8 +155,6 @@
       .grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 760px) {
-      .composer .c6, .composer .c4, .composer .c3,
-      .entryRow .c2, .entryRow .c3, .entryRow .c4 { grid-column: span 12; }
       .auth input[type="text"], .auth input[type="password"] { width: 100%; }
       .auth .field { min-width: 100%; }
     }
@@ -199,47 +189,12 @@
     <div id="app">
       <div class="grid">
         <section class="panel">
-          <h2>Compose Transaction</h2>
-          <div class="composer">
-            <div class="field c6">
-              <label for="txnDate">Date *</label>
-              <input id="txnDate" type="date" />
-            </div>
-            <div class="field c6">
-              <label for="txnPayee">Payee</label>
-              <input id="txnPayee" type="text" placeholder="Merchant / Employer" />
-            </div>
-            <div class="field c6">
-              <label for="txnSource">Source</label>
-              <input id="txnSource" type="text" placeholder="manual" />
-            </div>
-            <div class="field c6">
-              <label for="txnExternal">External ID</label>
-              <input id="txnExternal" type="text" placeholder="optional import id" />
-            </div>
-            <div class="field c12">
-              <label for="txnMemo">Memo</label>
-              <textarea id="txnMemo" placeholder="Transaction memo"></textarea>
-            </div>
-          </div>
-
-          <div class="toolbar" style="margin-top: 8px;">
-            <strong style="font-size:13px;">Entries</strong>
-            <div class="line">
-              <button class="btn" id="btnAddEntry" type="button">+ Add entry row</button>
-              <button class="btn primary" id="btnSaveTxn" type="button">Save transaction</button>
-            </div>
-          </div>
-          <div id="entryRows"></div>
-          <div class="help" style="margin-top:10px;">
-            Signed quantity: positive for inflow, negative for outflow. A transaction can include one or many entries.
-          </div>
-        </section>
-
-        <section class="panel">
           <div class="toolbar">
             <h2 style="margin:0;">Register</h2>
             <div class="line">
+              <button class="btn primary" id="btnNewTxn" type="button">New Transaction</button>
+              <button class="btn primary" id="btnEditSave" type="button" style="display:none;">Save Edit</button>
+              <button class="btn" id="btnEditCancel" type="button" style="display:none;">Cancel</button>
               <button class="btn" id="btnRefresh">Refresh</button>
               <button class="btn danger" id="btnDeleteTxn" disabled>Delete selected txn</button>
             </div>
@@ -290,7 +245,7 @@
                   <th>Asset</th>
                   <th>Qty</th>
                   <th>Status</th>
-                  <th>Txn</th>
+                  <th>Memo</th>
                 </tr>
               </thead>
               <tbody id="registerBody"></tbody>
@@ -324,7 +279,9 @@
         categories: [],
         txns: new Map(),
         entries: [],
-        selectedTxnId: ""
+        selectedTxnId: "",
+        editingTxnId: "",
+        editDraft: null
       };
 
       function escapeHtml(v) {
@@ -454,6 +411,17 @@
         });
       }
 
+      async function updateRecord(collection, id, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify(body)
+        });
+      }
+
+      async function getRecord(collection, id) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), { method: "GET" });
+      }
+
       async function deleteRecord(collection, id) {
         return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), { method: "DELETE" });
       }
@@ -476,56 +444,24 @@
       }
 
       function setBusy() {
-        const disabled = !SESSION.token || state.loading || state.saving || state.deleting;
-        ["#btnRefresh", "#btnSaveTxn", "#btnAddEntry", "#btnLogin"].forEach((sel) => {
+        const editing = !!state.editingTxnId;
+        const disabled = !SESSION.token || state.loading || state.saving || state.deleting || editing;
+        ["#btnRefresh", "#btnNewTxn", "#btnLogin"].forEach((sel) => {
           const el = $(sel);
           if (el) el.disabled = disabled && sel !== "#btnLogin";
         });
-        const canDelete = !!SESSION.token && !!state.selectedTxnId && !state.loading && !state.saving && !state.deleting;
-        $("#btnDeleteTxn").disabled = !canDelete;
-      }
-
-      function entryTemplate(data) {
-        const d = data || {};
-        const row = document.createElement("div");
-        row.className = "entryRow";
-        row.innerHTML = [
-          '<div class="field c3"><label>Account *</label><select data-k="account"></select></div>',
-          '<div class="field c3"><label>Category</label><select data-k="category"></select></div>',
-          '<div class="field c2"><label>Asset *</label><select data-k="asset"></select></div>',
-          '<div class="field c2"><label>Qty *</label><input data-k="qty" type="text" placeholder="-50 or 100.25" /></div>',
-          '<div class="field c2"><label>Status *</label><select data-k="status"></select></div>',
-          '<div class="field c12"><label>Entry memo</label><input data-k="memo" type="text" placeholder="optional" /></div>',
-          '<div class="c12"><button class="btn danger" type="button" data-k="remove">Remove row</button></div>'
-        ].join("");
-
-        const accountSel = $('select[data-k="account"]', row);
-        const categorySel = $('select[data-k="category"]', row);
-        const assetSel = $('select[data-k="asset"]', row);
-        const statusSel = $('select[data-k="status"]', row);
-
-        accountSel.innerHTML = '<option value="">Select account</option>' + state.accounts.map((a) => '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.name || a.id) + ' (' + escapeHtml(a.type || "other") + ')</option>').join("");
-        categorySel.innerHTML = '<option value="">(none)</option>' + state.categories.map((c) => '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name || c.id) + ' [' + escapeHtml(c.kind || "other") + ']</option>').join("");
-        assetSel.innerHTML = state.assets.map((a) => '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(a.symbol || a.id) + '</option>').join("");
-        statusSel.innerHTML = '<option value="pending">pending</option><option value="cleared">cleared</option>';
-
-        accountSel.value = d.account || "";
-        categorySel.value = d.category || "";
-        assetSel.value = d.asset || (state.assets.find((a) => String(a.symbol).toUpperCase() === "USD") || {}).id || "";
-        $('input[data-k="qty"]', row).value = d.qty == null ? "" : String(d.qty);
-        statusSel.value = d.status || "cleared";
-        $('input[data-k="memo"]', row).value = d.memo || "";
-
-        $('button[data-k="remove"]', row).addEventListener("click", function() {
-          row.remove();
-          if ($$(".entryRow", $("#entryRows")).length === 0) addEntryRow();
+        ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
+          const el = $(sel);
+          if (el) el.disabled = disabled;
         });
-
-        return row;
-      }
-
-      function addEntryRow(seed) {
-        $("#entryRows").appendChild(entryTemplate(seed));
+        const canDelete = !!SESSION.token && !!state.selectedTxnId && !state.loading && !state.saving && !state.deleting && !editing;
+        $("#btnDeleteTxn").disabled = !canDelete;
+        const btnEditSave = $("#btnEditSave");
+        const btnEditCancel = $("#btnEditCancel");
+        if (btnEditSave) btnEditSave.style.display = editing ? "inline-flex" : "none";
+        if (btnEditCancel) btnEditCancel.style.display = editing ? "inline-flex" : "none";
+        if (btnEditSave) btnEditSave.disabled = !editing || state.saving || state.loading || state.deleting;
+        if (btnEditCancel) btnEditCancel.disabled = !editing || state.saving || state.loading || state.deleting;
       }
 
       function refillFilterSelect(selId, list, placeholder, labelFn) {
@@ -606,6 +542,210 @@
         renderRegister();
       }
 
+      function fieldOrNull(v) {
+        const s = String(v == null ? "" : v).trim();
+        return s ? s : null;
+      }
+
+      function optionList(items, selected, labelFn, includeBlank) {
+        let html = "";
+        if (includeBlank) html += '<option value=""></option>';
+        html += items.map((item) => {
+          const value = String(item.id);
+          const isSel = String(selected || "") === value ? " selected" : "";
+          return '<option value="' + escapeHtml(value) + '"' + isSel + '>' + escapeHtml(labelFn(item)) + "</option>";
+        }).join("");
+        return html;
+      }
+
+      function sortedCopyByLabel(items, labelFn) {
+        return items.slice().sort((a, b) => labelFn(a).localeCompare(labelFn(b), undefined, { sensitivity: "base" }));
+      }
+
+      function localTodayYmd() {
+        const now = new Date();
+        return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      }
+
+      async function startNewInlineEdit() {
+        if (!SESSION.token) return;
+        if (state.loading || state.saving || state.deleting) return;
+        if (state.editingTxnId) {
+          setStatus("warn", "Finish or cancel the current inline edit before creating a new transaction.");
+          return;
+        }
+
+        let createdTxnId = "";
+        let createdEntryId = "";
+        try {
+          state.loading = true;
+          setBusy();
+
+          if (!state.accounts.length || !state.assets.length || !state.categories.length) {
+            await loadReferenceData();
+          }
+
+          const accountSorted = sortedCopyByLabel(state.accounts, (a) => (a.name || a.id || ""));
+          const categorySorted = sortedCopyByLabel(state.categories, (c) => (c.name || c.id || ""));
+          const assetSorted = sortedCopyByLabel(state.assets, (a) => (a.symbol || a.id || ""));
+          const usdAsset = state.assets.find((a) => String(a.symbol || "").toUpperCase() === "USD");
+
+          const defaultAccount = accountSorted[0] ? accountSorted[0].id : "";
+          const defaultCategory = categorySorted[0] ? categorySorted[0].id : "";
+          const defaultAsset = usdAsset ? usdAsset.id : (assetSorted[0] ? assetSorted[0].id : "");
+          if (!defaultAccount) throw new Error("No account available for default selection.");
+          if (!defaultAsset) throw new Error("No asset available for default selection.");
+
+          const normalizedDate = normalizeDateToNoonUtc(localTodayYmd());
+          const txn = await createRecord("txns", {
+            date: normalizedDate,
+            source: "manual"
+          });
+          createdTxnId = txn.id;
+          const entry = await createRecord("entries", {
+            txn: txn.id,
+            date: normalizedDate,
+            account: defaultAccount,
+            category: defaultCategory || null,
+            asset: defaultAsset,
+            qty: 0,
+            status: "pending"
+          });
+          createdEntryId = entry.id;
+
+          state.selectedTxnId = txn.id;
+          state.editingTxnId = txn.id;
+          state.editDraft = { txn: txn, entries: [entry] };
+          setStatus("warn", "Created new transaction and opened inline edit mode.");
+          await loadRegister();
+        } catch (err) {
+          if (createdEntryId) {
+            try { await deleteRecord("entries", createdEntryId); } catch {}
+          }
+          if (createdTxnId) {
+            try { await deleteRecord("txns", createdTxnId); } catch {}
+          }
+          const info = classifyError(err);
+          setStatus(info.kind, "New transaction failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      async function startInlineEdit(txnId) {
+        if (!SESSION.token || !txnId) return;
+        if (state.loading || state.saving || state.deleting) return;
+        if (state.editingTxnId && state.editingTxnId !== txnId) {
+          setStatus("warn", "Finish or cancel the current inline edit before editing another transaction.");
+          return;
+        }
+        if (state.editingTxnId === txnId) return;
+        try {
+          state.loading = true;
+          setBusy();
+          const txn = await getRecord("txns", txnId);
+          const entries = await listRecordsSafe("entries", {
+            filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"',
+            sort: "-date",
+            perPage: 500
+          });
+          state.editingTxnId = txnId;
+          state.selectedTxnId = txnId;
+          state.editDraft = { txn: txn, entries: entries };
+          setStatus("warn", "Inline edit mode: update fields, then Save Edit or Cancel.");
+          renderRegister();
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Failed to start edit: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      function cancelInlineEdit() {
+        state.editingTxnId = "";
+        state.editDraft = null;
+        setStatus("ok", "Edit canceled.");
+        renderRegister();
+        setBusy();
+      }
+
+      async function saveInlineEdit() {
+        if (!state.editingTxnId || !state.editDraft || !SESSION.token) return;
+        if (state.saving) return;
+        const txnId = state.editingTxnId;
+        const root = $('#registerBody tr[data-edit-root="1"]');
+        if (!root) return;
+        let normalizedDate = "";
+        let payee = null;
+        let memo = null;
+        const updates = [];
+
+        try {
+          const dateRaw = $('input[data-edit="txn-date"]', root).value;
+          payee = fieldOrNull($('input[data-edit="txn-payee"]', root).value);
+          memo = fieldOrNull($('input[data-edit="txn-memo"]', root).value);
+          if (!dateRaw) throw new Error("Date is required.");
+          normalizedDate = normalizeDateToNoonUtc(dateRaw);
+
+          const entryRows = $$('tr[data-edit-entry="1"]', $("#registerBody"));
+          for (const row of entryRows) {
+            const entryId = row.getAttribute("data-entry-id") || "";
+            const account = $('select[data-edit="entry-account"]', row).value;
+            const category = $('select[data-edit="entry-category"]', row).value;
+            const asset = $('select[data-edit="entry-asset"]', row).value;
+            const qtyRaw = $('input[data-edit="entry-qty"]', row).value.trim();
+            const status = $('select[data-edit="entry-status"]', row).value;
+
+            if (!entryId) throw new Error("Entry id missing in edit row.");
+            if (!account) throw new Error("Account is required for all entries.");
+            if (!asset) throw new Error("Asset is required for all entries.");
+            if (!status) throw new Error("Status is required for all entries.");
+            if (!qtyRaw) throw new Error("Qty is required for all entries.");
+            const qty = Number(qtyRaw);
+            if (!Number.isFinite(qty)) throw new Error("Qty must be numeric for all entries.");
+
+            const body = {
+              date: normalizedDate,
+              account: account,
+              category: category || null,
+              asset: asset,
+              qty: qty,
+              status: status
+            };
+            updates.push({ id: entryId, body: body });
+          }
+        } catch (err) {
+          setStatus("bad", "Save failed: " + (err && err.message ? err.message : String(err)));
+          return;
+        }
+
+        try {
+          state.saving = true;
+          setBusy();
+          await updateRecord("txns", txnId, {
+            date: normalizedDate,
+            payee: payee,
+            memo: memo
+          });
+          for (const u of updates) {
+            await updateRecord("entries", u.id, u.body);
+          }
+          state.editingTxnId = "";
+          state.editDraft = null;
+          setStatus("ok", "Transaction " + txnId + " updated.");
+          await refreshAll();
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Save edit failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.saving = false;
+          setBusy();
+        }
+      }
+
       function renderRegister() {
         const body = $("#registerBody");
         const accountById = new Map(state.accounts.map((a) => [a.id, a]));
@@ -639,6 +779,67 @@
           const txn = state.txns.get(txnId) || {};
           const isSelected = !!state.selectedTxnId && txnId === state.selectedTxnId;
 
+          if (state.editingTxnId && state.editingTxnId === txnId && state.editDraft) {
+            const draftTxn = state.editDraft.txn || {};
+            const draftEntries = state.editDraft.entries || [];
+            const isSingle = draftEntries.length <= 1;
+
+            if (isSingle) {
+              const e = draftEntries[0] || {};
+              const trSingle = document.createElement("tr");
+              trSingle.className = "txn-edit txn-edit-end";
+              trSingle.setAttribute("data-edit-root", "1");
+              trSingle.setAttribute("data-edit-entry", "1");
+              trSingle.setAttribute("data-entry-id", String(e.id || ""));
+              trSingle.innerHTML = [
+                '<td><input class="inlineInput" data-edit="txn-date" type="date" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
+                '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
+                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-asset">' + optionList(state.assets, e.asset, (a) => (a.symbol || a.id), false) + "</select></td>",
+                '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
+                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>',
+                '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>'
+              ].join("");
+              body.appendChild(trSingle);
+              return;
+            }
+
+            const trTxn = document.createElement("tr");
+            trTxn.className = "txn-edit";
+            trTxn.setAttribute("data-edit-root", "1");
+            trTxn.innerHTML = [
+              '<td><input class="inlineInput" data-edit="txn-date" type="date" value="' + escapeHtml(fmtDate(draftTxn.date)) + '" /></td>',
+              '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
+              "<td></td>",
+              "<td></td>",
+              "<td></td>",
+              "<td></td>",
+              "<td></td>",
+              '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>'
+            ].join("");
+            body.appendChild(trTxn);
+
+            draftEntries.forEach((e, idx) => {
+              const trE = document.createElement("tr");
+              trE.className = "txn-edit" + (idx === draftEntries.length - 1 ? " txn-edit-end" : "");
+              trE.setAttribute("data-edit-entry", "1");
+              trE.setAttribute("data-entry-id", String(e.id || ""));
+              trE.innerHTML = [
+                "<td></td>",
+                "<td></td>",
+                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-asset">' + optionList(state.assets, e.asset, (a) => (a.symbol || a.id), false) + "</select></td>",
+                '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
+                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>',
+                "<td></td>"
+              ].join("");
+              body.appendChild(trE);
+            });
+            return;
+          }
+
           if (group.length <= 1) {
             const e = group[0];
             if (!e) return;
@@ -657,10 +858,11 @@
               "<td>" + escapeHtml((assetById.get(e.asset) || {}).symbol || e.asset || "") + "</td>",
               "<td>" + escapeHtml(qtyTxt) + "</td>",
               "<td>" + escapeHtml(e.status || "") + "</td>",
-              "<td class=\"mono\">" + escapeHtml(e.txn || "") + "</td>"
+              "<td>" + escapeHtml(txn.memo || "") + "</td>"
             ].join("");
 
             tr.addEventListener("click", function() { selectTxn(e.txn || ""); });
+            tr.addEventListener("dblclick", function() { startInlineEdit(e.txn || ""); });
             body.appendChild(tr);
             return;
           }
@@ -682,9 +884,10 @@
             "<td></td>",
             "<td>" + escapeHtml(totalTxt) + "</td>",
             "<td></td>",
-            "<td></td>"
+            "<td>" + escapeHtml(txn.memo || "") + "</td>"
           ].join("");
           parentRow.addEventListener("click", function() { selectTxn(txnId); });
+          parentRow.addEventListener("dblclick", function() { startInlineEdit(txnId); });
           body.appendChild(parentRow);
 
           group.forEach((e, idx) => {
@@ -706,98 +909,12 @@
             ].join("");
 
             tr.addEventListener("click", function() { selectTxn(txnId); });
+            tr.addEventListener("dblclick", function() { startInlineEdit(txnId); });
             body.appendChild(tr);
           });
         });
 
-        $("#resultCount").textContent = state.entries.length + " entries shown across " + txnOrder.length + " transactions.";
-      }
-
-      function parseComposer() {
-        const dateRaw = $("#txnDate").value;
-        const payee = $("#txnPayee").value.trim();
-        const memo = $("#txnMemo").value.trim();
-        const source = $("#txnSource").value.trim();
-        const externalId = $("#txnExternal").value.trim();
-
-        if (!dateRaw) throw new Error("Date is required.");
-        const normalizedDate = normalizeDateToNoonUtc(dateRaw);
-
-        const rows = $$(".entryRow", $("#entryRows"));
-        if (rows.length < 1) throw new Error("At least one entry row is required.");
-
-        const entries = rows.map((row, idx) => {
-          const account = $('select[data-k="account"]', row).value;
-          const category = $('select[data-k="category"]', row).value;
-          const asset = $('select[data-k="asset"]', row).value;
-          const qtyRaw = $('input[data-k="qty"]', row).value.trim();
-          const status = $('select[data-k="status"]', row).value;
-          const ememo = $('input[data-k="memo"]', row).value.trim();
-
-          if (!account) throw new Error("Entry " + (idx + 1) + ": account is required.");
-          if (!asset) throw new Error("Entry " + (idx + 1) + ": asset is required.");
-          if (!status) throw new Error("Entry " + (idx + 1) + ": status is required.");
-          if (!qtyRaw) throw new Error("Entry " + (idx + 1) + ": qty is required.");
-
-          const qty = Number(qtyRaw);
-          if (!Number.isFinite(qty)) throw new Error("Entry " + (idx + 1) + ": qty must be numeric.");
-
-          const out = {
-            date: normalizedDate,
-            account: account,
-            asset: asset,
-            qty: qty,
-            status: status
-          };
-          if (category) out.category = category;
-          if (ememo) out.memo = ememo;
-          return out;
-        });
-
-        const txn = { date: normalizedDate };
-        if (payee) txn.payee = payee;
-        if (memo) txn.memo = memo;
-        if (source) txn.source = source;
-        if (externalId) txn.external_id = externalId;
-
-        return { txn: txn, entries: entries };
-      }
-
-      async function saveTransaction() {
-        if (!SESSION.token) return;
-        if (state.saving) return;
-        state.saving = true;
-        setBusy();
-
-        let createdTxnId = "";
-        const createdEntryIds = [];
-
-        try {
-          const payload = parseComposer();
-          const txn = await createRecord("txns", payload.txn);
-          createdTxnId = txn.id;
-
-          for (const entry of payload.entries) {
-            const rec = await createRecord("entries", Object.assign({}, entry, { txn: createdTxnId }));
-            createdEntryIds.push(rec.id);
-          }
-
-          setStatus("ok", "Saved transaction " + createdTxnId + " with " + createdEntryIds.length + " entries.");
-          clearComposer();
-          await refreshAll();
-        } catch (err) {
-          if (createdTxnId) {
-            for (const eid of createdEntryIds) {
-              try { await deleteRecord("entries", eid); } catch {}
-            }
-            try { await deleteRecord("txns", createdTxnId); } catch {}
-          }
-          const info = classifyError(err);
-          setStatus(info.kind, "Save failed: " + (err && err.message ? err.message : info.message));
-        } finally {
-          state.saving = false;
-          setBusy();
-        }
+        $("#resultCount").textContent = state.entries.length + " entries shown across " + txnOrder.length + " transactions. Double-click a transaction row to edit inline.";
       }
 
       async function deleteSelectedTransaction() {
@@ -828,18 +945,6 @@
         }
       }
 
-      function clearComposer() {
-        const now = new Date();
-        const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-        $("#txnDate").value = localDate;
-        $("#txnPayee").value = "";
-        $("#txnMemo").value = "";
-        $("#txnSource").value = "manual";
-        $("#txnExternal").value = "";
-        $("#entryRows").innerHTML = "";
-        addEntryRow();
-      }
-
       async function refreshAll() {
         if (!SESSION.token) return;
         state.loading = true;
@@ -847,21 +952,6 @@
 
         try {
           await loadReferenceData();
-
-          const rows = $$(".entryRow", $("#entryRows"));
-          if (rows.length === 0) addEntryRow();
-          else {
-            const cachedRows = rows.map((r) => ({
-              account: $('select[data-k="account"]', r).value,
-              category: $('select[data-k="category"]', r).value,
-              asset: $('select[data-k="asset"]', r).value,
-              qty: $('input[data-k="qty"]', r).value,
-              status: $('select[data-k="status"]', r).value,
-              memo: $('input[data-k="memo"]', r).value
-            }));
-            $("#entryRows").innerHTML = "";
-            cachedRows.forEach((seed) => addEntryRow(seed));
-          }
 
           await loadRegister();
 
@@ -872,6 +962,8 @@
           if (err && err.kind === "auth") {
             SESSION.token = "";
             store.del("pbToken");
+            state.editingTxnId = "";
+            state.editDraft = null;
             setAuthenticatedUI(false);
           }
         } finally {
@@ -918,7 +1010,6 @@
           SESSION.token = res.token;
           store.set("pbToken", res.token);
           setAuthenticatedUI(true);
-          clearComposer();
           setStatus("ok", "Login succeeded. Session saved in localStorage.");
           await refreshAll();
         } catch (err) {
@@ -946,6 +1037,8 @@
         state.entries = [];
         state.txns = new Map();
         state.selectedTxnId = "";
+        state.editingTxnId = "";
+        state.editDraft = null;
         $("#registerBody").innerHTML = "";
         $("#selectedMeta").textContent = "";
         $("#resultCount").textContent = "";
@@ -955,12 +1048,22 @@
       });
 
       $("#btnRefresh").addEventListener("click", refreshAll);
-      $("#btnAddEntry").addEventListener("click", function() { addEntryRow(); });
-      $("#btnSaveTxn").addEventListener("click", saveTransaction);
+      $("#btnNewTxn").addEventListener("click", startNewInlineEdit);
       $("#btnDeleteTxn").addEventListener("click", deleteSelectedTransaction);
+      $("#btnEditSave").addEventListener("click", saveInlineEdit);
+      $("#btnEditCancel").addEventListener("click", cancelInlineEdit);
 
       ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
         $(sel).addEventListener("change", refreshAll);
+      });
+
+      $("#registerBody").addEventListener("keydown", function(e) {
+        if (e.key !== "Enter") return;
+        if (!state.editingTxnId) return;
+        const t = e.target;
+        if (!t || !(t.matches("input") || t.matches("select"))) return;
+        e.preventDefault();
+        saveInlineEdit();
       });
 
       $("#pbUrl").value = store.get("pbUrl", "");
@@ -974,7 +1077,6 @@
           const ok = await validateCachedSession();
           if (ok) {
             setAuthenticatedUI(true);
-            clearComposer();
             setStatus("ok", "Session restored via auth-refresh.");
             await refreshAll();
             return;
@@ -985,7 +1087,6 @@
 
         setAuthenticatedUI(false);
         setStatus("warn", "Not logged in. Enter URL, email, and password.");
-        clearComposer();
         setBusy();
       })();
     })();
