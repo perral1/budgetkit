@@ -130,6 +130,19 @@
       border-radius: 10px;
       background: rgba(10, 16, 24, 0.65);
     }
+    .sectionLabel {
+      padding: 8px 10px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: var(--muted);
+      border-bottom: 1px solid rgba(43, 61, 87, 0.65);
+      background: rgba(17, 26, 38, 0.9);
+      font-weight: 700;
+    }
+    .sectionLabel:not(:first-child) {
+      border-top: 1px solid rgba(43, 61, 87, 0.65);
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -268,7 +281,13 @@
         </div>
         <div class="small" id="summaryLine"></div>
         <div class="tableWrap" style="margin-top:10px;">
-          <table aria-label="Budget by category and month">
+          <div class="sectionLabel">Income</div>
+          <table aria-label="Income budget by category and month">
+            <thead id="incomeHead"></thead>
+            <tbody id="incomeBody"></tbody>
+          </table>
+          <div class="sectionLabel">Expense</div>
+          <table aria-label="Expense budget by category and month">
             <thead id="budgetHead"></thead>
             <tbody id="budgetBody"></tbody>
           </table>
@@ -302,7 +321,9 @@
         budgetLineRecordByKey: new Map(),
         activityByCategoryMonth: new Map(),
         openingByCategory: new Map(),
-        tableRows: [],
+        incomeRows: [],
+        expenseRows: [],
+        editableRows: [],
         editing: null
       };
 
@@ -528,6 +549,7 @@
           rows.push({
             id,
             name: String(category.name || ""),
+            kind: String(category.kind || ""),
             groupName: parsed.groupName,
             categoryName: parsed.categoryName,
             months
@@ -535,106 +557,113 @@
         }
 
         rows.sort((a, b) => {
+          if (a.kind !== b.kind) return a.kind === "income" ? -1 : 1;
           const g = a.groupName.localeCompare(b.groupName);
           if (g !== 0) return g;
           return a.categoryName.localeCompare(b.categoryName);
         });
 
-        state.tableRows = rows;
+        state.incomeRows = rows.filter((r) => r.kind === "income");
+        state.expenseRows = rows.filter((r) => r.kind === "expense");
+        state.editableRows = rows.slice();
       }
 
       function renderTable() {
         const selected = state.selectedMonth;
-        const head = $("#budgetHead");
-        const body = $("#budgetBody");
-
-        let top = '<tr><th class="group" rowspan="2">Group</th><th class="category" rowspan="2">Category</th>';
-        for (let m = 1; m <= 12; m += 1) {
-          if (m === selected) top += '<th colspan="3">' + MONTH_NAMES[m - 1] + "</th>";
-          else top += '<th rowspan="2" data-select-month="' + m + '" style="cursor:pointer;">' + MONTH_NAMES[m - 1] + "</th>";
+        const rowIndexById = new Map();
+        for (let i = 0; i < state.editableRows.length; i += 1) {
+          rowIndexById.set(String(state.editableRows[i].id), i);
         }
-        top += "</tr>";
 
-        let sub = "<tr>";
-        for (let m = 1; m <= 12; m += 1) {
-          if (m === selected) {
-            sub += "<th>Budgeted</th><th>Spent</th><th>Available</th>";
-          }
-        }
-        sub += "</tr>";
-        head.innerHTML = top + sub;
-
-        const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
-        const groupNames = new Set();
-        const rowsHtml = [];
-        let currentGroup = "";
-        let groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
-
-        function pushGroupTotal(groupName) {
-          if (!groupName) return;
-          let line = '<tr class="groupTotal"><td class="group">' + escapeHtml(groupName) + '</td><td class="category">Total</td>';
+        function renderSection(headEl, bodyEl, rows, totalLabel) {
+          let top = '<tr><th class="group" rowspan="2">Group</th><th class="category" rowspan="2">Category</th>';
           for (let m = 1; m <= 12; m += 1) {
-            const t = groupTotals[m - 1];
+            if (m === selected) top += '<th colspan="3">' + MONTH_NAMES[m - 1] + "</th>";
+            else top += '<th rowspan="2" data-select-month="' + m + '" style="cursor:pointer;">' + MONTH_NAMES[m - 1] + "</th>";
+          }
+          top += "</tr>";
+
+          let sub = "<tr>";
+          for (let m = 1; m <= 12; m += 1) {
+            if (m === selected) sub += "<th>Budgeted</th><th>Spent</th><th>Available</th>";
+          }
+          sub += "</tr>";
+          headEl.innerHTML = top + sub;
+
+          const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+          const rowsHtml = [];
+          let currentGroup = "";
+          let groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+
+          function pushGroupTotal(groupName) {
+            if (!groupName) return;
+            let line = '<tr class="groupTotal"><td class="group">' + escapeHtml(groupName) + '</td><td class="category">Total</td>';
+            for (let m = 1; m <= 12; m += 1) {
+              const t = groupTotals[m - 1];
+              if (m === selected) {
+                line += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+                line += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+                line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+              } else {
+                line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
+              }
+            }
+            line += "</tr>";
+            rowsHtml.push(line);
+          }
+
+          for (const row of rows) {
+            if (currentGroup && currentGroup !== row.groupName) {
+              pushGroupTotal(currentGroup);
+              groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+            }
+            currentGroup = row.groupName;
+            const editIndex = rowIndexById.get(String(row.id));
+            let line = '<tr><td class="group" title="' + escapeHtml(row.groupName) + '">' + escapeHtml(row.groupName) + '</td><td class="category" title="' + escapeHtml(row.categoryName) + '">' + escapeHtml(row.categoryName) + "</td>";
+            for (let m = 1; m <= 12; m += 1) {
+              const cell = row.months[m - 1];
+              totals[m - 1].budgeted += cell.budgeted;
+              totals[m - 1].spent += cell.spent;
+              totals[m - 1].available += cell.available;
+              groupTotals[m - 1].budgeted += cell.budgeted;
+              groupTotals[m - 1].spent += cell.spent;
+              groupTotals[m - 1].available += cell.available;
+              if (m === selected) {
+                line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
+                line += '<td class="num ' + (cell.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.spent) + "</td>";
+                line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
+              } else {
+                line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
+              }
+            }
+            line += "</tr>";
+            rowsHtml.push(line);
+          }
+
+          pushGroupTotal(currentGroup);
+
+          let totalLine = '<tr class="total"><td class="group">' + escapeHtml(totalLabel) + '</td><td class="category">Total</td>';
+          for (let m = 1; m <= 12; m += 1) {
+            const t = totals[m - 1];
             if (m === selected) {
-              line += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
-              line += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
-              line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+              totalLine += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+              totalLine += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+              totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
             } else {
-              line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
+              totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
             }
           }
-          line += "</tr>";
-          rowsHtml.push(line);
+          totalLine += "</tr>";
+          rowsHtml.push(totalLine);
+          bodyEl.innerHTML = rowsHtml.join("");
         }
 
-        for (let rowIndex = 0; rowIndex < state.tableRows.length; rowIndex += 1) {
-          const row = state.tableRows[rowIndex];
-          if (currentGroup && currentGroup !== row.groupName) {
-            pushGroupTotal(currentGroup);
-            groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
-          }
-          currentGroup = row.groupName;
-          groupNames.add(row.groupName);
-
-          let line = '<tr><td class="group" title="' + escapeHtml(row.groupName) + '">' + escapeHtml(row.groupName) + '</td><td class="category" title="' + escapeHtml(row.categoryName) + '">' + escapeHtml(row.categoryName) + "</td>";
-          for (let m = 1; m <= 12; m += 1) {
-            const cell = row.months[m - 1];
-            totals[m - 1].budgeted += cell.budgeted;
-            totals[m - 1].spent += cell.spent;
-            totals[m - 1].available += cell.available;
-            groupTotals[m - 1].budgeted += cell.budgeted;
-            groupTotals[m - 1].spent += cell.spent;
-            groupTotals[m - 1].available += cell.available;
-            if (m === selected) {
-              line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + rowIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
-              line += '<td class="num ' + (cell.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.spent) + "</td>";
-              line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
-            } else {
-              line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
-            }
-          }
-          line += "</tr>";
-          rowsHtml.push(line);
-        }
-        pushGroupTotal(currentGroup);
-
-        let totalLine = '<tr class="total"><td class="group">All Groups</td><td class="category">Total</td>';
-        for (let m = 1; m <= 12; m += 1) {
-          const t = totals[m - 1];
-          if (m === selected) {
-            totalLine += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
-            totalLine += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
-            totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
-          } else {
-            totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
-          }
-        }
-        totalLine += "</tr>";
-        rowsHtml.push(totalLine);
-        body.innerHTML = rowsHtml.join("");
+        renderSection($("#incomeHead"), $("#incomeBody"), state.incomeRows, "All Income Groups");
+        renderSection($("#budgetHead"), $("#budgetBody"), state.expenseRows, "All Expense Groups");
 
         const selectedName = MONTH_NAMES[selected - 1];
-        $("#summaryLine").textContent = "Groups: " + groupNames.size + ". Categories: " + state.tableRows.length + ". Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
+        const allGroups = new Set(state.editableRows.map((r) => r.groupName));
+        $("#summaryLine").textContent = "Groups: " + allGroups.size + ". Categories: " + state.editableRows.length + ". Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
         $("#yearValue").textContent = String(state.year);
       }
 
@@ -652,11 +681,11 @@
       }
 
       function beginEditByRowIndex(rowIndex) {
-        if (rowIndex < 0 || rowIndex >= state.tableRows.length) {
+        if (rowIndex < 0 || rowIndex >= state.editableRows.length) {
           stopEditing();
           return;
         }
-        const row = state.tableRows[rowIndex];
+        const row = state.editableRows[rowIndex];
         beginEditCell(String(row.id), rowIndex);
       }
 
@@ -725,8 +754,8 @@
         if (!nav || typeof nav !== "object") return out;
         if (Number.isFinite(nav.rowDelta)) {
           const nextRow = currentEdit.rowIndex + nav.rowDelta;
-          if (nextRow >= 0 && nextRow < state.tableRows.length) {
-            const nextRowObj = state.tableRows[nextRow];
+          if (nextRow >= 0 && nextRow < state.editableRows.length) {
+            const nextRowObj = state.editableRows[nextRow];
             out.rowIndex = nextRow;
             out.categoryId = String(nextRowObj.id);
           }
@@ -742,7 +771,7 @@
           return out;
         }
         if (typeof nav.rowIndex === "number" && Number.isFinite(nav.rowIndex) && typeof nav.categoryId === "string" && nav.categoryId) {
-          if (nav.rowIndex >= 0 && nav.rowIndex < state.tableRows.length) {
+          if (nav.rowIndex >= 0 && nav.rowIndex < state.editableRows.length) {
             out.rowIndex = nav.rowIndex;
             out.categoryId = nav.categoryId;
           }
@@ -832,8 +861,12 @@
         state.budgetLineRecordByKey = new Map();
         state.activityByCategoryMonth = new Map();
         state.openingByCategory = new Map();
-        state.tableRows = [];
+        state.incomeRows = [];
+        state.expenseRows = [];
+        state.editableRows = [];
         state.editing = null;
+        $("#incomeHead").innerHTML = "";
+        $("#incomeBody").innerHTML = "";
         $("#budgetHead").innerHTML = "";
         $("#budgetBody").innerHTML = "";
         $("#summaryLine").textContent = "";
@@ -848,7 +881,7 @@
 
         const [categories, accounts, budgetLines, entries] = await Promise.all([
           listRecordsSafe("categories", {
-            filter: 'kind = "expense" && is_archived = false',
+            filter: '(kind = "income" || kind = "expense") && is_archived = false',
             sort: "name",
             perPage: 500
           }),
@@ -875,7 +908,7 @@
         );
 
         state.categories = categories
-          .filter((c) => String(c.kind || "") === "expense" && c.is_archived !== true)
+          .filter((c) => (String(c.kind || "") === "expense" || String(c.kind || "") === "income") && c.is_archived !== true)
           .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
         state.accounts = accounts;
 
@@ -903,7 +936,9 @@
           const catId = String(entry.category || "");
           if (!catId || !categoriesById.has(catId)) continue;
           const cat = categoriesById.get(catId);
-          if (!cat || String(cat.kind || "") !== "expense") continue;
+          if (!cat) continue;
+          const kind = String(cat.kind || "");
+          if (kind !== "expense" && kind !== "income") continue;
           const accountId = String(entry.account || "");
           if (!nonVirtualAccountIds.has(accountId)) continue;
           const dateStr = String(entry.date || "");
@@ -1019,7 +1054,7 @@
         await refreshAll();
       });
 
-      $("#budgetBody").addEventListener("dblclick", async (ev) => {
+      $("#app").addEventListener("dblclick", async (ev) => {
         const cell = ev.target && ev.target.closest ? ev.target.closest('td[data-edit-budgeted="1"]') : null;
         if (!cell) return;
         const categoryId = String(cell.getAttribute("data-category-id") || "");
