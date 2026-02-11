@@ -157,14 +157,28 @@
       z-index: 3;
       background: rgba(17, 26, 38, 0.98);
     }
-    th.cat, td.cat {
+    th.group, td.group {
       position: sticky;
       left: 0;
+      z-index: 5;
+      background: rgba(17, 26, 38, 0.98);
+      min-width: 180px;
+    }
+    th.category, td.category {
+      position: sticky;
+      left: 180px;
       z-index: 4;
       background: rgba(17, 26, 38, 0.98);
-      min-width: 200px;
+      min-width: 220px;
     }
-    td.cat {
+    td.group {
+      color: var(--muted);
+      font-weight: 700;
+      max-width: 240px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+    td.category {
       color: var(--text);
       font-weight: 600;
       max-width: 320px;
@@ -201,8 +215,12 @@
       font-weight: 700;
       background: rgba(25, 39, 59, 0.65);
     }
+    tr.groupTotal td {
+      font-weight: 700;
+      background: rgba(22, 34, 52, 0.75);
+    }
     tr:hover td { background: rgba(110, 193, 255, 0.06); }
-    tr:hover td.cat { background: rgba(25, 39, 59, 0.95); }
+    tr:hover td.group, tr:hover td.category { background: rgba(25, 39, 59, 0.95); }
     @media (max-width: 900px) {
       .auth .field { min-width: 100%; }
       .auth input[type="text"], .auth input[type="password"] { width: 100%; }
@@ -472,6 +490,20 @@
         }
       }
 
+      function splitCategoryName(rawName) {
+        const name = String(rawName || "").trim();
+        const idx = name.indexOf(":");
+        if (idx < 0) {
+          return {
+            groupName: "(Ungrouped)",
+            categoryName: name || "(Unnamed)"
+          };
+        }
+        const groupName = name.slice(0, idx).trim() || "(Ungrouped)";
+        const categoryName = name.slice(idx + 1).trim() || "(Uncategorized)";
+        return { groupName, categoryName };
+      }
+
       function buildGridRows() {
         const rows = [];
         const year = state.year;
@@ -492,8 +524,21 @@
               available: available
             });
           }
-          rows.push({ id, name: String(category.name || ""), months });
+          const parsed = splitCategoryName(category.name);
+          rows.push({
+            id,
+            name: String(category.name || ""),
+            groupName: parsed.groupName,
+            categoryName: parsed.categoryName,
+            months
+          });
         }
+
+        rows.sort((a, b) => {
+          const g = a.groupName.localeCompare(b.groupName);
+          if (g !== 0) return g;
+          return a.categoryName.localeCompare(b.categoryName);
+        });
 
         state.tableRows = rows;
       }
@@ -503,7 +548,7 @@
         const head = $("#budgetHead");
         const body = $("#budgetBody");
 
-        let top = '<tr><th class="cat" rowspan="2">Category</th>';
+        let top = '<tr><th class="group" rowspan="2">Group</th><th class="category" rowspan="2">Category</th>';
         for (let m = 1; m <= 12; m += 1) {
           if (m === selected) top += '<th colspan="3">' + MONTH_NAMES[m - 1] + "</th>";
           else top += '<th rowspan="2" data-select-month="' + m + '" style="cursor:pointer;">' + MONTH_NAMES[m - 1] + "</th>";
@@ -520,15 +565,46 @@
         head.innerHTML = top + sub;
 
         const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+        const groupNames = new Set();
         const rowsHtml = [];
+        let currentGroup = "";
+        let groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+
+        function pushGroupTotal(groupName) {
+          if (!groupName) return;
+          let line = '<tr class="groupTotal"><td class="group">' + escapeHtml(groupName) + '</td><td class="category">Total</td>';
+          for (let m = 1; m <= 12; m += 1) {
+            const t = groupTotals[m - 1];
+            if (m === selected) {
+              line += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+              line += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+              line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+            } else {
+              line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
+            }
+          }
+          line += "</tr>";
+          rowsHtml.push(line);
+        }
+
         for (let rowIndex = 0; rowIndex < state.tableRows.length; rowIndex += 1) {
           const row = state.tableRows[rowIndex];
-          let line = '<tr><td class="cat" title="' + escapeHtml(row.name) + '">' + escapeHtml(row.name) + "</td>";
+          if (currentGroup && currentGroup !== row.groupName) {
+            pushGroupTotal(currentGroup);
+            groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+          }
+          currentGroup = row.groupName;
+          groupNames.add(row.groupName);
+
+          let line = '<tr><td class="group" title="' + escapeHtml(row.groupName) + '">' + escapeHtml(row.groupName) + '</td><td class="category" title="' + escapeHtml(row.categoryName) + '">' + escapeHtml(row.categoryName) + "</td>";
           for (let m = 1; m <= 12; m += 1) {
             const cell = row.months[m - 1];
             totals[m - 1].budgeted += cell.budgeted;
             totals[m - 1].spent += cell.spent;
             totals[m - 1].available += cell.available;
+            groupTotals[m - 1].budgeted += cell.budgeted;
+            groupTotals[m - 1].spent += cell.spent;
+            groupTotals[m - 1].available += cell.available;
             if (m === selected) {
               line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + rowIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
               line += '<td class="num ' + (cell.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.spent) + "</td>";
@@ -540,8 +616,9 @@
           line += "</tr>";
           rowsHtml.push(line);
         }
+        pushGroupTotal(currentGroup);
 
-        let totalLine = '<tr class="total"><td class="cat">Total</td>';
+        let totalLine = '<tr class="total"><td class="group">All Groups</td><td class="category">Total</td>';
         for (let m = 1; m <= 12; m += 1) {
           const t = totals[m - 1];
           if (m === selected) {
@@ -557,7 +634,7 @@
         body.innerHTML = rowsHtml.join("");
 
         const selectedName = MONTH_NAMES[selected - 1];
-        $("#summaryLine").textContent = "Categories: " + state.tableRows.length + ". Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
+        $("#summaryLine").textContent = "Groups: " + groupNames.size + ". Categories: " + state.tableRows.length + ". Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
         $("#yearValue").textContent = String(state.year);
       }
 
@@ -635,6 +712,12 @@
             await saveCurrentEditAndNavigate({ monthDelta: 1 });
           }
         });
+        input.addEventListener("blur", async () => {
+          if (!state.editing) return;
+          if (state.editing.categoryId !== categoryId || state.editing.rowIndex !== rowIndex) return;
+          if (state.loading) return;
+          await saveCurrentEditAndNavigate({ reason: "blur" });
+        });
       }
 
       function resolveNextEditTarget(nav, currentEdit) {
@@ -685,6 +768,12 @@
 
         const parsed = parseMoneyInput(input.value);
         if (parsed == null) {
+          if (nav && nav.reason === "blur") {
+            renderTable();
+            stopEditing();
+            setStatus("warn", "Edit canceled due to invalid value.");
+            return;
+          }
           setStatus("bad", "Invalid budgeted value.");
           input.focus();
           input.select();
