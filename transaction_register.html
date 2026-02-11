@@ -302,8 +302,10 @@
         saving: false,
         deleting: false,
         accounts: [],
+        accountById: new Map(),
         assets: [],
         categories: [],
+        categoryById: new Map(),
         txns: new Map(),
         entries: [],
         selectedTxnIds: [],
@@ -521,12 +523,9 @@
         const budgetOnly = $("#fltBudgetOnly").value === "1";
         if (!budgetOnly) return entries;
 
-        const categoryById = new Map(state.categories.map((c) => [c.id, c]));
-        const accountById = new Map(state.accounts.map((a) => [a.id, a]));
-
         return entries.filter((e) => {
-          const c = categoryById.get(e.category);
-          const a = accountById.get(e.account);
+          const c = getCategoryById(e.category);
+          const a = getAccountById(e.account);
           if (!c || !a) return false;
           return (c.kind === "income" || c.kind === "expense") && a.type !== "virtual";
         });
@@ -539,11 +538,13 @@
           listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 500 })
         ]);
         state.accounts = accounts;
+        state.accountById = new Map(state.accounts.map((a) => [String(a.id), a]));
         state.assets = assets;
         state.categories = categories;
+        state.categoryById = new Map(state.categories.map((c) => [String(c.id), c]));
 
-        refillFilterSelect("#fltAccount", state.accounts, "(all accounts)", (a) => (a.name || a.id) + " (" + (a.type || "other") + ")");
-        refillFilterSelect("#fltCategory", state.categories, "(all categories)", (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]");
+        refillFilterSelect("#fltAccount", state.accounts, "(all accounts)", (a) => accountLabel(a, false));
+        refillFilterSelect("#fltCategory", state.categories, "(all categories)", (c) => categoryLabel(c, false));
       }
 
       async function loadRegister() {
@@ -553,6 +554,8 @@
           sort: "-date",
           perPage: 500
         });
+        await ensureAccountsLoaded(entries.map((e) => e && e.account));
+        await ensureCategoriesLoaded(entries.map((e) => e && e.category));
 
         const filtered = filteredClientSide(entries);
         state.entries = filtered;
@@ -568,13 +571,136 @@
           perPage: 500
         });
         txns.forEach((t) => state.txns.set(t.id, t));
+        await backfillMissingLinkedTxns(state.entries);
 
         renderRegister();
+      }
+
+      async function backfillMissingLinkedTxns(entries) {
+        const missingIds = Array.from(new Set(
+          (entries || [])
+            .map((e) => String(e && e.txn ? e.txn : ""))
+            .filter((txnId) => txnId && !state.txns.has(txnId))
+        ));
+        if (!missingIds.length) return;
+
+        const batchSize = 25;
+        for (let i = 0; i < missingIds.length; i += batchSize) {
+          const batch = missingIds.slice(i, i + batchSize);
+          const rows = await Promise.all(batch.map(async (txnId) => {
+            try {
+              return await getRecord("txns", txnId);
+            } catch {
+              return null;
+            }
+          }));
+          rows.forEach((txn) => {
+            if (txn && txn.id) state.txns.set(txn.id, txn);
+          });
+        }
       }
 
       function fieldOrNull(v) {
         const s = String(v == null ? "" : v).trim();
         return s ? s : null;
+      }
+
+      function accountLabel(account, includeArchivedTag) {
+        const base = (account && (account.name || account.id)) || "";
+        const type = (account && account.type) || "other";
+        const archivedTag = includeArchivedTag && account && account.is_archived ? " [archived]" : "";
+        return base + " (" + type + ")" + archivedTag;
+      }
+
+      function categoryLabel(category, includeArchivedTag) {
+        const base = (category && (category.name || category.id)) || "";
+        const kind = (category && category.kind) || "other";
+        const archivedTag = includeArchivedTag && category && category.is_archived ? " [archived]" : "";
+        return base + " [" + kind + "]" + archivedTag;
+      }
+
+      function getAccountById(accountId) {
+        return state.accountById.get(String(accountId || "")) || null;
+      }
+
+      function accountDisplayName(accountId) {
+        const a = getAccountById(accountId);
+        return (a && (a.name || a.id)) || String(accountId || "");
+      }
+
+      function getCategoryById(categoryId) {
+        return state.categoryById.get(String(categoryId || "")) || null;
+      }
+
+      function categoryDisplayName(categoryId) {
+        const c = getCategoryById(categoryId);
+        return (c && (c.name || c.id)) || String(categoryId || "");
+      }
+
+      function editableAccountOptions(selectedAccountId) {
+        const selectedId = String(selectedAccountId || "");
+        if (!selectedId) return state.accounts.slice();
+        if (state.accounts.some((a) => String(a.id) === selectedId)) return state.accounts.slice();
+        const selected = getAccountById(selectedId);
+        if (!selected) return state.accounts.slice();
+        return state.accounts.concat([selected]);
+      }
+
+      function editableCategoryOptions(selectedCategoryId) {
+        const selectedId = String(selectedCategoryId || "");
+        if (!selectedId) return state.categories.slice();
+        if (state.categories.some((c) => String(c.id) === selectedId)) return state.categories.slice();
+        const selected = getCategoryById(selectedId);
+        if (!selected) return state.categories.slice();
+        return state.categories.concat([selected]);
+      }
+
+      async function ensureAccountsLoaded(accountIds) {
+        const missingIds = Array.from(new Set(
+          (accountIds || [])
+            .map((id) => String(id || ""))
+            .filter((id) => id && !state.accountById.has(id))
+        ));
+        if (!missingIds.length) return;
+
+        const batchSize = 25;
+        for (let i = 0; i < missingIds.length; i += batchSize) {
+          const batch = missingIds.slice(i, i + batchSize);
+          const rows = await Promise.all(batch.map(async (accountId) => {
+            try {
+              return await getRecord("accounts", accountId);
+            } catch {
+              return null;
+            }
+          }));
+          rows.forEach((account) => {
+            if (account && account.id) state.accountById.set(String(account.id), account);
+          });
+        }
+      }
+
+      async function ensureCategoriesLoaded(categoryIds) {
+        const missingIds = Array.from(new Set(
+          (categoryIds || [])
+            .map((id) => String(id || ""))
+            .filter((id) => id && !state.categoryById.has(id))
+        ));
+        if (!missingIds.length) return;
+
+        const batchSize = 25;
+        for (let i = 0; i < missingIds.length; i += batchSize) {
+          const batch = missingIds.slice(i, i + batchSize);
+          const rows = await Promise.all(batch.map(async (categoryId) => {
+            try {
+              return await getRecord("categories", categoryId);
+            } catch {
+              return null;
+            }
+          }));
+          rows.forEach((category) => {
+            if (category && category.id) state.categoryById.set(String(category.id), category);
+          });
+        }
       }
 
       function optionList(items, selected, labelFn, includeBlank) {
@@ -717,6 +843,8 @@
             sort: "-date",
             perPage: 500
           });
+          await ensureAccountsLoaded(entries.map((e) => e && e.account));
+          await ensureCategoriesLoaded(entries.map((e) => e && e.category));
           state.editingTxnId = txnId;
           state.selectedTxnIds = [txnId];
           state.selectionAnchorTxnId = txnId;
@@ -821,8 +949,6 @@
 
       function renderRegister() {
         const body = $("#registerBody");
-        const accountById = new Map(state.accounts.map((a) => [a.id, a]));
-        const categoryById = new Map(state.categories.map((c) => [c.id, c]));
 
         body.innerHTML = "";
         const txnGroups = new Map();
@@ -898,9 +1024,9 @@
               trSingle.setAttribute("data-entry-id", String(e.id || ""));
               trSingle.innerHTML = [
                 '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), false) + "</select></td>",
                 '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), true) + "</select></td>",
                 '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
@@ -930,9 +1056,9 @@
               trE.setAttribute("data-entry-id", String(e.id || ""));
               trE.innerHTML = [
                 "<td></td>",
-                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(state.accounts, e.account, (a) => (a.name || a.id) + " (" + (a.type || "other") + ")", false) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), false) + "</select></td>",
                 "<td></td>",
-                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(state.categories, e.category, (c) => (c.name || c.id) + " [" + (c.kind || "other") + "]", true) + "</select></td>",
+                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), true) + "</select></td>",
                 "<td></td>",
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
@@ -954,9 +1080,9 @@
 
             tr.innerHTML = [
               "<td>" + escapeHtml(fmtDate(e.date)) + "</td>",
-              "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+              "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
               "<td>" + escapeHtml(txn.payee || "") + "</td>",
-              "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
+              "<td><span class=\"pill\">" + escapeHtml(categoryDisplayName(e.category)) + "</span></td>",
               "<td>" + escapeHtml(txn.memo || "") + "</td>",
               "<td>" + escapeHtml(qtyTxt) + "</td>",
               "<td>" + escapeHtml(e.status || "") + "</td>"
@@ -999,9 +1125,9 @@
             const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
             tr.innerHTML = [
               "<td></td>",
-              "<td>" + escapeHtml((accountById.get(e.account) || {}).name || e.account || "") + "</td>",
+              "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
               "<td></td>",
-              "<td><span class=\"pill\">" + escapeHtml((categoryById.get(e.category) || {}).name || "") + "</span></td>",
+              "<td><span class=\"pill\">" + escapeHtml(categoryDisplayName(e.category)) + "</span></td>",
               "<td></td>",
               "<td>" + escapeHtml(qtyTxt) + "</td>",
               "<td>" + escapeHtml(e.status || "") + "</td>"
@@ -1150,6 +1276,11 @@
         $("#pbEmail").value = "";
         $("#pbPass").value = "";
         state.entries = [];
+        state.accounts = [];
+        state.accountById = new Map();
+        state.assets = [];
+        state.categories = [];
+        state.categoryById = new Map();
         state.txns = new Map();
         state.selectedTxnIds = [];
         state.selectionAnchorTxnId = "";
