@@ -531,13 +531,12 @@
             const key = id + "|" + monthKey(year, m);
             const budgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
             const activity = Number(state.activityByCategoryMonth.get(key) || 0);
-            available = available + budgeted + activity;
-            months.push({
-              budgeted: budgeted,
-              activity: activity,
-              spent: -activity,
-              available: available
-            });
+              available = available + budgeted + activity;
+              months.push({
+                budgeted: budgeted,
+                activity: activity,
+                available: available
+              });
           }
           const parsed = splitCategoryName(category.name);
           rows.push({
@@ -579,7 +578,7 @@
 
           let sub = "<tr>";
           for (let m = 1; m <= 12; m += 1) {
-            if (m === selected) sub += "<th>Budgeted</th><th>Spent</th><th>Available</th>";
+            if (m === selected) sub += "<th>Budgeted</th><th>Activity</th><th>Available</th>";
           }
           sub += "</tr>";
           headEl.innerHTML = top + sub;
@@ -617,14 +616,14 @@
             for (let m = 1; m <= 12; m += 1) {
               const cell = row.months[m - 1];
               totals[m - 1].budgeted += cell.budgeted;
-              totals[m - 1].spent += cell.spent;
+              totals[m - 1].spent += cell.activity;
               totals[m - 1].available += cell.available;
               groupTotals[m - 1].budgeted += cell.budgeted;
-              groupTotals[m - 1].spent += cell.spent;
+              groupTotals[m - 1].spent += cell.activity;
               groupTotals[m - 1].available += cell.available;
               if (m === selected) {
                 line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
-                line += '<td class="num ' + (cell.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.spent) + "</td>";
+                line += '<td class="num ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
                 line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
               } else {
                 line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
