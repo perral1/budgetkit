@@ -123,6 +123,10 @@
       text-overflow: ellipsis;
     }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.2px; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--text); }
+    th.sorted-asc::after { content: " \2191"; color: var(--accent); }
+    th.sorted-desc::after { content: " \2193"; color: var(--accent); }
     tr.selected { background: rgba(110, 193, 255, 0.08); }
     tr.txn-parent td {
       background: rgba(110, 193, 255, 0.06);
@@ -171,6 +175,14 @@
       align-items: center;
     }
     .help { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .pager {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .pager .spacer { flex: 1 1 auto; }
     @media (max-width: 1080px) {
       .grid { grid-template-columns: 1fr; }
     }
@@ -255,7 +267,7 @@
           </div>
 
           <div style="overflow:auto;">
-            <table>
+            <table id="registerTable">
               <colgroup>
                 <col style="width:11%;" />
                 <col style="width:18%;" />
@@ -267,19 +279,31 @@
               </colgroup>
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Account</th>
-                  <th>Payee</th>
-                  <th>Category</th>
-                  <th>Memo</th>
-                  <th>Amount</th>
-                  <th>Status</th>
+                  <th data-sort="date">Date</th>
+                  <th data-sort="account">Account</th>
+                  <th data-sort="payee">Payee</th>
+                  <th data-sort="category">Category</th>
+                  <th data-sort="memo">Memo</th>
+                  <th data-sort="amount">Amount</th>
+                  <th data-sort="status">Status</th>
                 </tr>
               </thead>
               <tbody id="registerBody"></tbody>
             </table>
           </div>
           <div class="help" id="resultCount" style="margin-top:10px;"></div>
+          <div class="pager">
+            <button class="btn" id="btnPrevPage" type="button">Prev</button>
+            <button class="btn" id="btnNextPage" type="button">Next</button>
+            <span class="mono" id="pageInfo">Page 1 of 1</span>
+            <div class="spacer"></div>
+            <label class="mono" for="perPage">Rows/page</label>
+            <select id="perPage">
+              <option value="50">50</option>
+              <option value="100" selected>100</option>
+              <option value="200">200</option>
+            </select>
+          </div>
         </section>
       </div>
     </div>
@@ -313,7 +337,12 @@
         visibleTxnOrder: [],
         editingTxnId: "",
         editDraft: null,
-        pendingFocusKey: ""
+        pendingFocusKey: "",
+        sort: { column: "date", direction: "desc" },
+        page: 1,
+        perPage: 100,
+        totalPages: 1,
+        totalItems: 0
       };
 
       function escapeHtml(v) {
@@ -392,29 +421,36 @@
           .join("&");
       }
 
-      async function listRecordsSafe(collection, opts) {
+      async function listRecordsPageSafe(collection, opts) {
         const options = opts || {};
         const perPage = options.perPage || 200;
+        const page = options.page || 1;
 
         const attemptOne = {
-          page: 1,
+          page: page,
           perPage: perPage,
           filter: options.filter || "",
           sort: options.sort || "",
           expand: options.expand || ""
         };
         const attemptTwo = {
-          page: 1,
+          page: page,
           perPage: perPage,
           sort: options.sort || "",
           expand: options.expand || ""
         };
-        const attemptThree = { page: 1, perPage: perPage };
+        const attemptThree = { page: page, perPage: perPage };
 
         async function runAttempt(q) {
           const qs = toQS(q);
           const data = await pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records?" + qs, { method: "GET" });
-          return (data && data.items) ? data.items : [];
+          return {
+            items: (data && data.items) ? data.items : [],
+            page: Math.max(1, Number((data && data.page) || page)),
+            perPage: Math.max(1, Number((data && data.perPage) || perPage)),
+            totalPages: Math.max(1, Number((data && data.totalPages) || 1)),
+            totalItems: Math.max(0, Number((data && data.totalItems) || 0))
+          };
         }
 
         try {
@@ -434,6 +470,20 @@
           }
           throw e1;
         }
+      }
+
+      async function listRecordsSafe(collection, opts) {
+        const options = Object.assign({}, opts || {});
+        const perPage = options.perPage || 200;
+        const first = await listRecordsPageSafe(collection, Object.assign({}, options, { page: 1, perPage: perPage }));
+        const all = (first.items || []).slice();
+        let page = 2;
+        while (page <= first.totalPages) {
+          const next = await listRecordsPageSafe(collection, Object.assign({}, options, { page: page, perPage: perPage }));
+          all.push(...(next.items || []));
+          page += 1;
+        }
+        return all;
       }
 
       async function createRecord(collection, body) {
@@ -494,6 +544,9 @@
         if (btnEditCancel) btnEditCancel.style.display = editing ? "inline-flex" : "none";
         if (btnEditSave) btnEditSave.disabled = !editing || state.saving || state.loading || state.deleting;
         if (btnEditCancel) btnEditCancel.disabled = !editing || state.saving || state.loading || state.deleting;
+        $("#btnPrevPage").disabled = disabled || state.page <= 1;
+        $("#btnNextPage").disabled = disabled || state.page >= state.totalPages;
+        $("#perPage").disabled = disabled;
       }
 
       function refillFilterSelect(selId, list, placeholder, labelFn) {
@@ -549,28 +602,32 @@
 
       async function loadRegister() {
         const entriesFilter = buildEntriesFilter();
-        const entries = await listRecordsSafe("entries", {
+        let entriesRes = await listRecordsPageSafe("entries", {
           filter: entriesFilter,
-          sort: "-date",
-          perPage: 500
+          sort: registerServerSortExpr(),
+          perPage: state.perPage,
+          page: state.page
         });
+        if (state.page > entriesRes.totalPages) {
+          state.page = entriesRes.totalPages;
+          entriesRes = await listRecordsPageSafe("entries", {
+            filter: entriesFilter,
+            sort: registerServerSortExpr(),
+            perPage: state.perPage,
+            page: state.page
+          });
+        }
+        state.totalPages = entriesRes.totalPages;
+        state.totalItems = entriesRes.totalItems;
+        updateRegisterPageInfo();
+
+        const entries = entriesRes.items || [];
         await ensureAccountsLoaded(entries.map((e) => e && e.account));
         await ensureCategoriesLoaded(entries.map((e) => e && e.category));
 
         const filtered = filteredClientSide(entries);
         state.entries = filtered;
         state.txns = new Map();
-        const txnFilterParts = [];
-        const from = $("#fltFrom").value;
-        const to = $("#fltTo").value;
-        if (from) txnFilterParts.push('date >= "' + normalizeDateToNoonUtc(from) + '"');
-        if (to) txnFilterParts.push('date <= "' + normalizeDateToNoonUtc(to) + '"');
-        const txns = await listRecordsSafe("txns", {
-          filter: txnFilterParts.join(" && "),
-          sort: "-date",
-          perPage: 500
-        });
-        txns.forEach((t) => state.txns.set(t.id, t));
         await backfillMissingLinkedTxns(state.entries);
 
         renderRegister();
@@ -716,6 +773,121 @@
 
       function sortedCopyByLabel(items, labelFn) {
         return items.slice().sort((a, b) => labelFn(a).localeCompare(labelFn(b), undefined, { sensitivity: "base" }));
+      }
+
+      function compareSortValues(a, b, direction) {
+        const dir = direction === "asc" ? 1 : -1;
+        const aNum = typeof a === "number" ? a : NaN;
+        const bNum = typeof b === "number" ? b : NaN;
+        if (Number.isFinite(aNum) && Number.isFinite(bNum)) {
+          if (aNum < bNum) return -1 * dir;
+          if (aNum > bNum) return 1 * dir;
+          return 0;
+        }
+        const aStr = String(a == null ? "" : a).toLocaleLowerCase();
+        const bStr = String(b == null ? "" : b).toLocaleLowerCase();
+        const cmp = aStr.localeCompare(bStr, undefined, { sensitivity: "base", numeric: true });
+        return cmp * dir;
+      }
+
+      function summarizeGroupText(group, valueFn) {
+        return Array.from(new Set((group || []).map(valueFn).map((v) => String(v || "").trim()).filter(Boolean)))
+          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+          .join(" | ");
+      }
+
+      function txnSortValue(txnId, group, txn, column) {
+        if (column === "date") {
+          const dateSource = txn.date || ((group && group[0]) ? group[0].date : "");
+          const ts = Date.parse(dateSource || "");
+          return Number.isFinite(ts) ? ts : -Infinity;
+        }
+        if (column === "account") {
+          if ((group || []).length <= 1) return accountDisplayName(group[0] && group[0].account);
+          return summarizeGroupText(group, (e) => accountDisplayName(e && e.account));
+        }
+        if (column === "payee") return txn.payee || "";
+        if (column === "category") {
+          if ((group || []).length <= 1) return categoryDisplayName(group[0] && group[0].category);
+          return summarizeGroupText(group, (e) => categoryDisplayName(e && e.category));
+        }
+        if (column === "memo") return txn.memo || "";
+        if (column === "amount") {
+          return (group || []).reduce((sum, e) => {
+            const q = Number(e && e.qty);
+            return Number.isFinite(q) ? (sum + q) : sum;
+          }, 0);
+        }
+        if (column === "status") {
+          if ((group || []).length <= 1) return (group[0] && group[0].status) || "";
+          return summarizeGroupText(group, (e) => (e && e.status) || "");
+        }
+        return String(txnId || "");
+      }
+
+      function updateRegisterSortHeaders() {
+        const headers = $$("th[data-sort]", $("#registerTable thead"));
+        headers.forEach((th) => {
+          const key = th.getAttribute("data-sort") || "";
+          const isActive = key === state.sort.column;
+          th.classList.toggle("sorted-asc", isActive && state.sort.direction === "asc");
+          th.classList.toggle("sorted-desc", isActive && state.sort.direction === "desc");
+          th.setAttribute("aria-sort", isActive ? (state.sort.direction === "asc" ? "ascending" : "descending") : "none");
+        });
+      }
+
+      function toggleRegisterSort(column) {
+        if (!column) return;
+        if (state.editingTxnId) {
+          setStatus("warn", "Finish or cancel inline edit before sorting.");
+          return;
+        }
+        if (state.sort.column === column) {
+          state.sort.direction = state.sort.direction === "asc" ? "desc" : "asc";
+        } else {
+          state.sort.column = column;
+          state.sort.direction = (column === "date" || column === "amount") ? "desc" : "asc";
+        }
+        state.page = 1;
+        updateRegisterSortHeaders();
+        if (column === "payee" || column === "memo") {
+          setStatus("warn", "Payee/Memo sorting uses current page only; PocketBase sort is applied on entries fields.");
+        }
+        refreshAll();
+      }
+
+      function setupRegisterSortHeaders() {
+        const headers = $$("th[data-sort]", $("#registerTable thead"));
+        headers.forEach((th) => {
+          th.classList.add("sortable");
+          if (th.getAttribute("data-sort-bound") === "1") return;
+          th.setAttribute("data-sort-bound", "1");
+          th.addEventListener("click", function() {
+            toggleRegisterSort(th.getAttribute("data-sort") || "");
+          });
+        });
+        updateRegisterSortHeaders();
+      }
+
+      function registerServerSortKey(column) {
+        if (column === "date") return "date";
+        if (column === "account") return "account";
+        if (column === "category") return "category";
+        if (column === "amount") return "qty";
+        if (column === "status") return "status";
+        return "date";
+      }
+
+      function registerServerSortExpr() {
+        const key = registerServerSortKey(state.sort.column);
+        return (state.sort.direction === "desc" ? "-" : "") + key;
+      }
+
+      function updateRegisterPageInfo() {
+        const current = Math.max(1, state.page || 1);
+        const totalPages = Math.max(1, state.totalPages || 1);
+        const totalItems = Math.max(0, state.totalItems || 0);
+        $("#pageInfo").textContent = "Page " + current + " of " + totalPages + " (" + totalItems + " rows)";
       }
 
       function localTodayYmd() {
@@ -961,6 +1133,19 @@
           }
           txnGroups.get(key).push(e);
         });
+        if (state.sort.column === "payee" || state.sort.column === "memo") {
+          txnOrder.sort((a, b) => {
+            const groupA = txnGroups.get(a) || [];
+            const groupB = txnGroups.get(b) || [];
+            const txnA = state.txns.get(a) || {};
+            const txnB = state.txns.get(b) || {};
+            const valA = txnSortValue(a, groupA, txnA, state.sort.column);
+            const valB = txnSortValue(b, groupB, txnB, state.sort.column);
+            const cmp = compareSortValues(valA, valB, state.sort.direction);
+            if (cmp !== 0) return cmp;
+            return String(a || "").localeCompare(String(b || ""), undefined, { sensitivity: "base", numeric: true });
+          });
+        }
         state.visibleTxnOrder = txnOrder.slice();
         const orderSet = new Set(txnOrder);
         state.selectedTxnIds = state.selectedTxnIds.filter((id) => orderSet.has(id));
@@ -1287,8 +1472,12 @@
         state.visibleTxnOrder = [];
         state.editingTxnId = "";
         state.editDraft = null;
+        state.page = 1;
+        state.totalPages = 1;
+        state.totalItems = 0;
         $("#registerBody").innerHTML = "";
         $("#resultCount").textContent = "";
+        updateRegisterPageInfo();
         setAuthenticatedUI(false);
         setStatus("ok", "Logged out. Local session cleared.");
         setBusy();
@@ -1301,7 +1490,28 @@
       $("#btnEditCancel").addEventListener("click", cancelInlineEdit);
 
       ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
-        $(sel).addEventListener("change", refreshAll);
+        $(sel).addEventListener("change", function() {
+          state.page = 1;
+          refreshAll();
+        });
+      });
+
+      $("#btnPrevPage").addEventListener("click", function() {
+        if (state.page <= 1 || state.loading || state.saving || state.deleting) return;
+        state.page -= 1;
+        refreshAll();
+      });
+      $("#btnNextPage").addEventListener("click", function() {
+        if (state.page >= state.totalPages || state.loading || state.saving || state.deleting) return;
+        state.page += 1;
+        refreshAll();
+      });
+      $("#perPage").addEventListener("change", function() {
+        const v = Number($("#perPage").value);
+        if (!Number.isFinite(v) || v < 1) return;
+        state.perPage = v;
+        state.page = 1;
+        refreshAll();
       });
 
       $("#registerBody").addEventListener("keydown", function(e) {
@@ -1320,8 +1530,11 @@
 
       $("#pbUrl").value = store.get("pbUrl", "");
       $("#pbEmail").value = store.get("pbEmail", "");
+      $("#perPage").value = String(state.perPage);
+      updateRegisterPageInfo();
 
       (async function init() {
+        setupRegisterSortHeaders();
         SESSION.base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
         SESSION.token = (store.get("pbToken", "") || "").trim();
 

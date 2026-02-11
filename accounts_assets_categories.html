@@ -84,6 +84,10 @@
     table{ width:100%; border-collapse:collapse; }
     th, td{ padding:10px 12px; border-bottom:1px solid rgba(34,48,68,.75); vertical-align:top; }
     th{ text-align:left; font-size:12px; color:var(--muted); letter-spacing:.3px; text-transform:uppercase; }
+    th.sortable{ cursor:pointer; user-select:none; }
+    th.sortable:hover{ color:var(--text); }
+    th.sorted-asc::after{ content:" \2191"; color:var(--accent); }
+    th.sorted-desc::after{ content:" \2193"; color:var(--accent); }
     td{ font-size:13px; }
     .mono{ font-family:var(--mono); font-size:12px; color:var(--muted); }
     .pill{
@@ -101,6 +105,13 @@
     .footNote{
       margin-top:10px; color:var(--muted); font-size:12px;
     }
+    .pager{
+      padding:10px 14px 14px;
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      border-top:1px solid rgba(34,48,68,.5);
+      background:rgba(18,28,41,.35);
+    }
+    .pager .spacer{ flex:1 1 auto; }
 
     /* modal */
     .modalBackdrop{
@@ -238,6 +249,18 @@
       <div class="empty" id="empty" style="display:none;">
         No records found.
       </div>
+      <div class="pager">
+        <button class="btn" id="btnPrevPage" type="button">Prev</button>
+        <button class="btn" id="btnNextPage" type="button">Next</button>
+        <span class="mono" id="pageInfo">Page 1 of 1</span>
+        <div class="spacer"></div>
+        <label class="mono" for="perPage">Rows/page</label>
+        <select id="perPage">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
     </section>
 
     <div class="footNote">
@@ -261,7 +284,6 @@
           <span class="mono" id="recordMeta"></span>
         </div>
         <div class="row">
-          <button class="btn danger" id="btnDelete" style="display:none;">Delete</button>
           <button class="btn" id="btnCancel">Cancel</button>
           <button class="btn primary" id="btnSave">Save</button>
         </div>
@@ -358,8 +380,7 @@
     return data;
   }
 
-  async function listRecords(collection, { q="", showArchived=false, onlyArchived=false }={}){
-    const perPage = 200;
+  async function listRecords(collection, { q="", showArchived=false, onlyArchived=false, page=1, perPage=50, sort="" }={}){
 
     async function tryList({ includeSearch=true, includeArchivedFilter=true }){
       let filterParts = [];
@@ -386,9 +407,16 @@
       }
 
       const filter = filterParts.length ? `&filter=${encodeURIComponent(filterParts.join(" && "))}` : "";
-      const url = `/api/collections/${encodeURIComponent(collection)}/records?page=1&perPage=${perPage}${filter}`;
+      const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+      const url = `/api/collections/${encodeURIComponent(collection)}/records?page=${page}&perPage=${perPage}${sortParam}${filter}`;
       const data = await pbFetch(url, { method:"GET" });
-      return data?.items || [];
+      return {
+        items: data?.items || [],
+        page: Math.max(1, Number(data?.page || page)),
+        perPage: Math.max(1, Number(data?.perPage || perPage)),
+        totalPages: Math.max(1, Number(data?.totalPages || 1)),
+        totalItems: Math.max(0, Number(data?.totalItems || 0))
+      };
     }
 
     try{
@@ -398,16 +426,16 @@
       // A common PocketBase 400 cause: filter references fields that don't exist (e.g., is_archived)
       if(msg.startsWith("HTTP 400:")){
         try{
-          const items = await tryList({ includeSearch:true, includeArchivedFilter:false });
+          const data = await tryList({ includeSearch:true, includeArchivedFilter:false });
           toast("bad", "Filter adjusted", "Your collection may not have is_archived; loaded without archived filtering.");
-          return items;
+          return data;
         }catch(e2){
           const msg2 = String(e2?.message || e2);
           if(msg2.startsWith("HTTP 400:")){
             // last resort: no filters at all
-            const items = await tryList({ includeSearch:false, includeArchivedFilter:false });
+            const data = await tryList({ includeSearch:false, includeArchivedFilter:false });
             toast("bad", "Filters disabled", "Search/filter syntax was rejected; loaded without filters. Check collection/field names.");
-            return items;
+            return data;
           }
           throw e2;
         }
@@ -455,6 +483,9 @@
         { key:"name", label:"Name" },
         { key:"type", label:"Type", pill:true },
         { key:"institution", label:"Institution" },
+        { key:"entry_count", label:"Entries", render:"accountEntryCount", mono:true },
+        { key:"balance_current", label:"Current", render:"accountCurrentBalance", mono:true },
+        { key:"balance_cleared", label:"Cleared", render:"accountClearedBalance", mono:true },
         { key:"is_archived", label:"Archived", pillBool:true },
         { key:"id", label:"ID", mono:true }
       ]
@@ -475,6 +506,7 @@
         { key:"symbol", label:"Symbol", pill:true },
         { key:"name", label:"Name" },
         { key:"precision", label:"Precision" },
+        { key:"entry_count", label:"Entries", render:"assetEntryCount", mono:true },
         { key:"id", label:"ID", mono:true }
       ]
     },
@@ -497,6 +529,7 @@
         { key:"name", label:"Name" },
         { key:"kind", label:"Kind", pill:true },
         { key:"parent", label:"Parent", render:"parentName" },
+        { key:"entry_count", label:"Entries", render:"categoryEntryCount", mono:true },
         { key:"is_archived", label:"Archived", pillBool:true },
         { key:"id", label:"ID", mono:true }
       ]
@@ -506,10 +539,212 @@
   let activeTab = "accounts";
   let records = [];
   let categoriesIndex = new Map();
+  let accountStats = new Map();
+  let assetEntryCounts = new Map();
+  let categoryEntryCounts = new Map();
   let editing = { mode:"new", id:null, data:null };
+  const tableSort = {
+    accounts: { key: "name", direction: "asc" },
+    assets: { key: "symbol", direction: "asc" },
+    categories: { key: "name", direction: "asc" }
+  };
+  const tablePaging = {
+    accounts: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
+    assets: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
+    categories: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 }
+  };
+
+  function fmtBalance(n){
+    const num = Number(n || 0);
+    if(!Number.isFinite(num)) return "0";
+    const isIntLike = Math.abs(num - Math.round(num)) < 1e-9;
+    return isIntLike ? String(Math.round(num)) : num.toFixed(2);
+  }
+
+  async function listAllEntriesForStats(){
+    const perPage = 500;
+    let page = 1;
+    let all = [];
+
+    while(true){
+      const data = await pbFetch(`/api/collections/${encodeURIComponent("entries")}/records?page=${page}&perPage=${perPage}`, { method:"GET" });
+      const items = data?.items || [];
+      all = all.concat(items);
+      const totalPages = Number(data?.totalPages || 1);
+      if(page >= totalPages) break;
+      page += 1;
+    }
+
+    return all;
+  }
+
+  async function computeEntryStats(){
+    const accountMap = new Map();
+    const assetMap = new Map();
+    const categoryMap = new Map();
+    const entries = await listAllEntriesForStats();
+
+    entries.forEach(e => {
+      const accountId = e?.account;
+      const assetId = e?.asset;
+      const categoryId = e?.category;
+      if(accountId){
+        const qty = Number(e?.qty || 0);
+        if(Number.isFinite(qty)){
+          const status = String(e?.status || "").toLowerCase();
+          const row = accountMap.get(accountId) || { current: 0, cleared: 0, entryCount: 0 };
+          row.entryCount += 1;
+          if(status === "cleared" || status === "pending"){
+            row.current += qty;
+          }
+          if(status === "cleared"){
+            row.cleared += qty;
+          }
+          accountMap.set(accountId, row);
+        }
+      }
+      if(assetId){
+        assetMap.set(assetId, (assetMap.get(assetId) || 0) + 1);
+      }
+      if(categoryId){
+        categoryMap.set(categoryId, (categoryMap.get(categoryId) || 0) + 1);
+      }
+    });
+
+    return { accountMap, assetMap, categoryMap };
+  }
+
+  function entriesCountForRecord(tab, record){
+    if(tab === "accounts") return (accountStats.get(record.id)?.entryCount || 0);
+    if(tab === "assets") return (assetEntryCounts.get(record.id) || 0);
+    if(tab === "categories") return (categoryEntryCounts.get(record.id) || 0);
+    return 0;
+  }
+
+  function canDeleteFromRow(tab, record){
+    return !!record?.is_archived && entriesCountForRecord(tab, record) === 0;
+  }
+
+  function compareSortValues(a, b, direction){
+    const dir = direction === "asc" ? 1 : -1;
+    const aNum = typeof a === "number" ? a : NaN;
+    const bNum = typeof b === "number" ? b : NaN;
+    if(Number.isFinite(aNum) && Number.isFinite(bNum)){
+      if(aNum < bNum) return -1 * dir;
+      if(aNum > bNum) return 1 * dir;
+      return 0;
+    }
+
+    const aStr = String(a == null ? "" : a).toLocaleLowerCase();
+    const bStr = String(b == null ? "" : b).toLocaleLowerCase();
+    return aStr.localeCompare(bStr, undefined, { sensitivity:"base", numeric:true }) * dir;
+  }
+
+  function tableSortStateForTab(tab){
+    if(!tableSort[tab]) tableSort[tab] = { key:"id", direction:"asc" };
+    return tableSort[tab];
+  }
+
+  function tablePagingStateForTab(tab){
+    if(!tablePaging[tab]) tablePaging[tab] = { page: 1, perPage: 50, totalPages: 1, totalItems: 0 };
+    return tablePaging[tab];
+  }
+
+  function isServerSortableColumn(column){
+    if(!column) return false;
+    if(column.render === "accountCurrentBalance") return false;
+    if(column.render === "accountClearedBalance") return false;
+    if(column.render === "accountEntryCount") return false;
+    if(column.render === "assetEntryCount") return false;
+    if(column.render === "categoryEntryCount") return false;
+    return true;
+  }
+
+  function serverSortExprForActiveTab(){
+    const schema = SCHEMA[activeTab];
+    const sortState = tableSortStateForTab(activeTab);
+    const column = schema.columns.find(c => c.key === sortState.key) || schema.columns[0];
+    if(!isServerSortableColumn(column)) return "";
+    const key = column.key || "id";
+    return (sortState.direction === "desc" ? "-" : "") + key;
+  }
+
+  function updatePagerUI(){
+    const paging = tablePagingStateForTab(activeTab);
+    const page = Math.max(1, paging.page || 1);
+    const totalPages = Math.max(1, paging.totalPages || 1);
+    const totalItems = Math.max(0, paging.totalItems || 0);
+    $("#pageInfo").textContent = `Page ${page} of ${totalPages} (${totalItems} rows)`;
+    $("#perPage").value = String(paging.perPage || 50);
+    $("#btnPrevPage").disabled = page <= 1;
+    $("#btnNextPage").disabled = page >= totalPages;
+  }
+
+  function rowSortValue(row, column){
+    if(column.render === "parentName"){
+      const parentId = row.parent || "";
+      return parentId ? (categoriesIndex.get(parentId)?.name || parentId) : "";
+    }
+    if(column.render === "accountCurrentBalance"){
+      const b = accountStats.get(row.id) || { current: 0, cleared: 0, entryCount: 0 };
+      return Number(b.current || 0);
+    }
+    if(column.render === "accountEntryCount"){
+      const b = accountStats.get(row.id) || { current: 0, cleared: 0, entryCount: 0 };
+      return Number(b.entryCount || 0);
+    }
+    if(column.render === "accountClearedBalance"){
+      const b = accountStats.get(row.id) || { current: 0, cleared: 0, entryCount: 0 };
+      return Number(b.cleared || 0);
+    }
+    if(column.render === "assetEntryCount"){
+      return Number(assetEntryCounts.get(row.id) || 0);
+    }
+    if(column.render === "categoryEntryCount"){
+      return Number(categoryEntryCounts.get(row.id) || 0);
+    }
+    if(column.pillBool){
+      return row[column.key] ? 1 : 0;
+    }
+    return row[column.key];
+  }
+
+  function sortedRecordsForTable(schema){
+    const sortState = tableSortStateForTab(activeTab);
+    const column = schema.columns.find(c => c.key === sortState.key) || schema.columns[0];
+    if(!column) return records.slice();
+    if(isServerSortableColumn(column)) return records.slice();
+
+    const rows = records.slice();
+
+    rows.sort((a, b) => {
+      const av = rowSortValue(a, column);
+      const bv = rowSortValue(b, column);
+      const cmp = compareSortValues(av, bv, sortState.direction);
+      if(cmp !== 0) return cmp;
+      return String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { sensitivity:"base", numeric:true });
+    });
+    return rows;
+  }
+
+  function toggleTableSort(columnKey){
+    if(!columnKey) return;
+    const sortState = tableSortStateForTab(activeTab);
+    const paging = tablePagingStateForTab(activeTab);
+    if(sortState.key === columnKey){
+      sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+    }else{
+      sortState.key = columnKey;
+      sortState.direction = "asc";
+    }
+    paging.page = 1;
+    refresh();
+  }
 
   function setActiveTab(tab){
     activeTab = tab;
+    const paging = tablePagingStateForTab(tab);
+    paging.page = 1;
     $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
     $$(".tab").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     $("#hint").textContent = `Manage ${SCHEMA[tab].label}: add, edit, delete.`;
@@ -521,6 +756,11 @@
 
   function renderTable(){
     const schema = SCHEMA[activeTab];
+    const sortState = tableSortStateForTab(activeTab);
+    if(!schema.columns.some(c => c.key === sortState.key)){
+      sortState.key = schema.columns[0] ? schema.columns[0].key : "id";
+      sortState.direction = "asc";
+    }
     const thead = $("#table thead");
     const tbody = $("#table tbody");
     thead.innerHTML = "";
@@ -530,6 +770,14 @@
     schema.columns.forEach(c => {
       const th = document.createElement("th");
       th.textContent = c.label;
+      th.classList.add("sortable");
+      if(c.key === sortState.key){
+        th.classList.add(sortState.direction === "asc" ? "sorted-asc" : "sorted-desc");
+        th.setAttribute("aria-sort", sortState.direction === "asc" ? "ascending" : "descending");
+      }else{
+        th.setAttribute("aria-sort", "none");
+      }
+      th.addEventListener("click", () => toggleTableSort(c.key));
       trh.appendChild(th);
     });
     const thA = document.createElement("th");
@@ -539,7 +787,8 @@
 
     $("#empty").style.display = records.length ? "none" : "block";
 
-    records.forEach(r => {
+    const sortedRows = sortedRecordsForTable(schema);
+    sortedRows.forEach(r => {
       const tr = document.createElement("tr");
       schema.columns.forEach(c => {
         const td = document.createElement("td");
@@ -547,6 +796,19 @@
           const parentId = r.parent || "";
           td.textContent = parentId ? (categoriesIndex.get(parentId)?.name || parentId) : "";
           if(parentId) td.classList.add("mono");
+        } else if(c.render === "accountCurrentBalance"){
+          const b = accountStats.get(r.id) || { current: 0, cleared: 0, entryCount: 0 };
+          td.textContent = fmtBalance(b.current);
+        } else if(c.render === "accountEntryCount"){
+          const b = accountStats.get(r.id) || { current: 0, cleared: 0, entryCount: 0 };
+          td.textContent = String(b.entryCount);
+        } else if(c.render === "accountClearedBalance"){
+          const b = accountStats.get(r.id) || { current: 0, cleared: 0, entryCount: 0 };
+          td.textContent = fmtBalance(b.cleared);
+        } else if(c.render === "assetEntryCount"){
+          td.textContent = String(assetEntryCounts.get(r.id) || 0);
+        } else if(c.render === "categoryEntryCount"){
+          td.textContent = String(categoryEntryCounts.get(r.id) || 0);
         } else if(c.pillBool){
           const v = !!r[c.key];
           const span = document.createElement("span");
@@ -592,10 +854,32 @@
         wrap.appendChild(btnArch);
       }
 
+      if(canDeleteFromRow(activeTab, r)){
+        const btnDel = document.createElement("button");
+        btnDel.className = "btn danger";
+        btnDel.textContent = "Delete";
+        btnDel.addEventListener("click", async () => {
+          const linkedEntries = entriesCountForRecord(activeTab, r);
+          if(linkedEntries > 0){
+            toast("bad", "Delete blocked", "Cannot delete while entries reference this record.");
+            return;
+          }
+          try{
+            await deleteRecord(activeTab, r.id);
+            toast("ok", "Deleted", `${schema.label.slice(0,-1)} ${r.id} deleted.`);
+            refresh();
+          }catch(e){
+            toast("bad", "Delete failed", e.message || String(e));
+          }
+        });
+        wrap.appendChild(btnDel);
+      }
+
       tdA.appendChild(wrap);
       tr.appendChild(tdA);
       tbody.appendChild(tr);
     });
+    updatePagerUI();
   }
 
   function buildField(field, data){
@@ -690,7 +974,6 @@
     $("#recordMeta").textContent = mode === "edit"
       ? `id=${record.id}  created=${fmtDate(record.created)}  updated=${fmtDate(record.updated)}`
       : "";
-    $("#btnDelete").style.display = mode === "edit" ? "inline-flex" : "none";
 
     const grid = $("#formGrid");
     grid.innerHTML = "";
@@ -764,24 +1047,63 @@
     try{
       $("#btnRefresh").disabled = true;
       $("#btnNew").disabled = true;
+      $("#btnPrevPage").disabled = true;
+      $("#btnNextPage").disabled = true;
+      $("#perPage").disabled = true;
+      accountStats = new Map();
+      assetEntryCounts = new Map();
+      categoryEntryCounts = new Map();
 
-      const catsAll = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false });
-      categoriesIndex = new Map(catsAll.map(c => [c.id, c]));
+      const catsAllRes = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false, page:1, perPage:500 });
+      categoriesIndex = new Map((catsAllRes.items || []).map(c => [c.id, c]));
 
       const q = $("#q").value;
       const showArchived = $("#showArchived").checked;
       const onlyArchived = $("#onlyArchived").checked;
       if(onlyArchived) $("#showArchived").checked = true;
 
-      records = await listRecords(activeTab, { q, showArchived, onlyArchived });
+      const stats = await computeEntryStats();
+      accountStats = stats.accountMap;
+      assetEntryCounts = stats.assetMap;
+      categoryEntryCounts = stats.categoryMap;
+
+      const paging = tablePagingStateForTab(activeTab);
+      let listRes = await listRecords(activeTab, {
+        q,
+        showArchived,
+        onlyArchived,
+        page: paging.page,
+        perPage: paging.perPage,
+        sort: serverSortExprForActiveTab()
+      });
+      if(paging.page > listRes.totalPages){
+        paging.page = listRes.totalPages;
+        listRes = await listRecords(activeTab, {
+          q,
+          showArchived,
+          onlyArchived,
+          page: paging.page,
+          perPage: paging.perPage,
+          sort: serverSortExprForActiveTab()
+        });
+      }
+      paging.totalPages = listRes.totalPages;
+      paging.totalItems = listRes.totalItems;
+      records = listRes.items || [];
       renderTable();
+      updatePagerUI();
     }catch(e){
       records = [];
       renderTable();
+      updatePagerUI();
       toast("bad", "Refresh failed", e.message || String(e));
     }finally{
       $("#btnRefresh").disabled = false;
       $("#btnNew").disabled = false;
+      $("#btnPrevPage").disabled = false;
+      $("#btnNextPage").disabled = false;
+      $("#perPage").disabled = false;
+      updatePagerUI();
     }
   }
 
@@ -790,13 +1112,40 @@
   $("#btnRefresh").addEventListener("click", refresh);
   $("#btnNew").addEventListener("click", () => openEditor("new", {}));
 
-  $("#q").addEventListener("keydown", (e) => { if(e.key === "Enter") refresh(); });
+  $("#q").addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){
+      tablePagingStateForTab(activeTab).page = 1;
+      refresh();
+    }
+  });
   $("#showArchived").addEventListener("change", () => {
     if(!$("#showArchived").checked) $("#onlyArchived").checked = false;
+    tablePagingStateForTab(activeTab).page = 1;
     refresh();
   });
   $("#onlyArchived").addEventListener("change", () => {
     if($("#onlyArchived").checked) $("#showArchived").checked = true;
+    tablePagingStateForTab(activeTab).page = 1;
+    refresh();
+  });
+  $("#btnPrevPage").addEventListener("click", () => {
+    const paging = tablePagingStateForTab(activeTab);
+    if(paging.page <= 1) return;
+    paging.page -= 1;
+    refresh();
+  });
+  $("#btnNextPage").addEventListener("click", () => {
+    const paging = tablePagingStateForTab(activeTab);
+    if(paging.page >= paging.totalPages) return;
+    paging.page += 1;
+    refresh();
+  });
+  $("#perPage").addEventListener("change", () => {
+    const paging = tablePagingStateForTab(activeTab);
+    const v = Number($("#perPage").value);
+    if(!Number.isFinite(v) || v < 1) return;
+    paging.perPage = v;
+    paging.page = 1;
     refresh();
   });
 
@@ -825,25 +1174,6 @@
       toast("bad", "Save failed", e.message || String(e));
     }finally{
       $("#btnSave").disabled = false;
-    }
-  });
-
-  $("#btnDelete").addEventListener("click", async () => {
-    const schema = SCHEMA[activeTab];
-    if(editing.mode !== "edit" || !editing.id) return;
-    const ok = confirm(`Delete this ${schema.label.slice(0,-1)}?\n\nThis cannot be undone.`);
-    if(!ok) return;
-
-    try{
-      $("#btnDelete").disabled = true;
-      await deleteRecord(activeTab, editing.id);
-      toast("ok", "Deleted", `${schema.label.slice(0,-1)} ${editing.id} deleted.`);
-      showModal(false);
-      refresh();
-    }catch(e){
-      toast("bad", "Delete failed", e.message || String(e));
-    }finally{
-      $("#btnDelete").disabled = false;
     }
   });
 
@@ -891,7 +1221,11 @@
     $("#pbPass").value = "";
     setLoggedInUI(false);
     records = [];
+    tablePagingStateForTab(activeTab).page = 1;
+    tablePagingStateForTab(activeTab).totalPages = 1;
+    tablePagingStateForTab(activeTab).totalItems = 0;
     renderTable();
+    updatePagerUI();
     toast("ok", "Logged out", "Local session cleared.");
   });
 
@@ -943,6 +1277,7 @@
   // Prefill from localStorage
   $("#pbUrl").value = store.get("pbUrl", "");
   $("#pbEmail").value = store.get("pbEmail", "");
+  updatePagerUI();
 
   // On load: if URL + token exist, validate them; if valid hide login; else show login
   (async () => {
@@ -964,6 +1299,7 @@
     setLoggedInUI(false);
     records = [];
     renderTable();
+    updatePagerUI();
     toast("bad", "Not logged in", "Enter URL, email, password and click Login.");
   })();
 })();

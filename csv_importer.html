@@ -188,13 +188,6 @@
             <input id="csvFile" type="file" accept=".csv,text/csv" />
           </div>
           <div class="field">
-            <label for="entryStatus">Entry Status</label>
-            <select id="entryStatus">
-              <option value="cleared" selected>cleared</option>
-              <option value="pending">pending</option>
-            </select>
-          </div>
-          <div class="field">
             <label for="idempotentIds">External IDs</label>
             <select id="idempotentIds">
               <option value="1" selected>Set deterministic IDs</option>
@@ -205,7 +198,7 @@
           <button class="btn primary" id="btnImport" type="button" disabled>Import CSV</button>
         </div>
         <div class="help" style="margin-top:8px;">
-          Expected headers: Date, Account, Payee, Category, Subcategory, Memo, Amount. All rows import with asset `USD`.
+          Expected headers: Date, Account, Payee, Category, Subcategory, Memo, Amount. Optional header: Cleared (`TRUE` = cleared, `FALSE` = pending). If Cleared is missing, status defaults to `cleared`. All rows import with asset `USD`.
         </div>
         <div class="mono" id="fileInfo" style="margin-top:8px;">No file loaded.</div>
       </section>
@@ -223,6 +216,7 @@
                 <th>Category</th>
                 <th>Subcategory</th>
                 <th>Amount</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody id="previewBody"></tbody>
@@ -288,7 +282,6 @@
         $("#btnPreview").disabled = !isAuthed || !state.file || state.importing;
         $("#btnClearFile").disabled = state.importing;
         $("#csvFile").disabled = !isAuthed || state.importing;
-        $("#entryStatus").disabled = state.importing;
         $("#idempotentIds").disabled = state.importing;
         $("#btnLogin").disabled = state.importing;
       }
@@ -437,6 +430,14 @@
         return Number.isFinite(n) ? n : null;
       }
 
+      function parseClearedStatus(raw) {
+        const s = String(raw == null ? "" : raw).trim().toUpperCase();
+        if (!s) return null;
+        if (s === "TRUE") return "cleared";
+        if (s === "FALSE") return "pending";
+        return null;
+      }
+
       function categoryKindFromName(name, qty) {
         const n = String(name || "").trim().toLowerCase();
         const lead = n.includes(":") ? n.slice(0, n.indexOf(":")).trim() : n;
@@ -531,7 +532,8 @@
           category: headers.indexOf("category"),
           subcategory: headers.indexOf("subcategory"),
           memo: headers.indexOf("memo"),
-          amount: headers.indexOf("amount")
+          amount: headers.indexOf("amount"),
+          cleared: headers.indexOf("cleared")
         };
 
         const required = ["date", "account", "category", "amount"];
@@ -551,6 +553,7 @@
           const subcategory = idx.subcategory >= 0 ? String(line[idx.subcategory] || "").trim() : "";
           const memo = idx.memo >= 0 ? String(line[idx.memo] || "").trim() : "";
           const amount = parseAmount(line[idx.amount]);
+          const status = idx.cleared >= 0 ? parseClearedStatus(line[idx.cleared]) : "cleared";
 
           out.push({
             lineNo: r + 1,
@@ -560,11 +563,15 @@
             category: category,
             subcategory: subcategory,
             memo: memo,
-            amount: amount
+            amount: amount,
+            status: status
           });
         }
 
-        return out;
+        return {
+          rows: out,
+          hasClearedColumn: idx.cleared >= 0
+        };
       }
 
       function renderPreview() {
@@ -579,10 +586,11 @@
             "<td>" + escapeHtml(r.category) + "</td>" +
             "<td>" + escapeHtml(r.subcategory) + "</td>" +
             "<td>" + escapeHtml(r.amount) + "</td>" +
+            "<td>" + escapeHtml(r.status || "") + "</td>" +
             "</tr>";
         }).join("");
 
-        const bad = state.parsedRows.filter((r) => !r.date || !r.account || !r.category || r.amount == null).length;
+        const bad = state.parsedRows.filter((r) => !r.date || !r.account || !r.category || r.amount == null || !r.status).length;
         $("#previewSummary").textContent = "Parsed rows: " + state.parsedRows.length + ". Invalid rows: " + bad + ".";
       }
 
@@ -592,13 +600,14 @@
         if (!row.account) missing.push("account");
         if (!row.category) missing.push("category");
         if (row.amount == null) missing.push("amount");
+        if (!row.status) missing.push("cleared");
         return missing.length ? ("missing/invalid: " + missing.join(", ")) : "";
       }
 
       function firstInvalidRow(rows) {
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i];
-          if (!r.date || !r.account || !r.category || r.amount == null) {
+          if (!r.date || !r.account || !r.category || r.amount == null || !r.status) {
             return r;
           }
         }
@@ -710,6 +719,43 @@
         return "import:csv:" + core;
       }
 
+      function buildPairedExternalId(fileName, left, right) {
+        const ordered = [left, right].sort((a, b) => a.lineNo - b.lineNo);
+        const core = [
+          fileName,
+          "pair",
+          ordered[0].lineNo,
+          ordered[1].lineNo,
+          ordered[0].date,
+          ordered[0].account,
+          ordered[0].amount,
+          ordered[1].account,
+          ordered[1].amount
+        ].join("|");
+        return "import:csv:" + core;
+      }
+
+      function isTransferCategory(name) {
+        return keyOfName(name) === "transfer";
+      }
+
+      function findPairedTransferIndex(rows, index, consumedIndexes) {
+        const row = rows[index];
+        if (!row || !row.date || !row.account || !row.category || row.amount == null || !row.status) return -1;
+        if (!isTransferCategory(row.category)) return -1;
+
+        for (let j = index + 1; j < rows.length; j++) {
+          if (consumedIndexes.has(j)) continue;
+          const candidate = rows[j];
+          if (!candidate || !candidate.date || !candidate.account || !candidate.category || candidate.amount == null || !candidate.status) continue;
+          if (!isTransferCategory(candidate.category)) continue;
+          if (candidate.date !== row.date) continue;
+          if (candidate.amount === -row.amount) return j;
+        }
+
+        return -1;
+      }
+
       async function importRows() {
         state.importing = true;
         setBusy();
@@ -720,15 +766,17 @@
         let createdEntries = 0;
         let createdAccounts = 0;
         let createdCategories = 0;
+        let pairedTxns = 0;
         let skipped = 0;
         let failed = 0;
         let loggedFirstInvalid = false;
+        const consumedIndexes = new Set();
+        let processedRows = 0;
 
         try {
           setStatus("", "Loading existing accounts/categories/assets...");
           await loadReferenceData();
           const usd = await ensureUsdAsset();
-          const status = $("#entryStatus").value;
           const useExternalId = $("#idempotentIds").value === "1";
           const fileName = state.file ? state.file.name : "csv";
 
@@ -736,11 +784,12 @@
           $("#importStats").textContent = "Running...";
 
           for (let i = 0; i < state.parsedRows.length; i++) {
+            if (consumedIndexes.has(i)) continue;
             const row = state.parsedRows[i];
 
-            if (!row.date || !row.account || !row.category || row.amount == null) {
+            if (!row.date || !row.account || !row.category || row.amount == null || !row.status) {
               skipped += 1;
-              pushLog("warn", "Line " + row.lineNo + " skipped: missing required value (date/account/category/amount).");
+              pushLog("warn", "Line " + row.lineNo + " skipped: missing required value (date/account/category/amount/cleared).");
               if (!loggedFirstInvalid) {
                 loggedFirstInvalid = true;
                 pushLog("warn", "First invalid row details: " + JSON.stringify({
@@ -750,33 +799,49 @@
                   account: row.account,
                   category: row.category,
                   amount: row.amount,
+                  status: row.status,
                   payee: row.payee,
                   subcategory: row.subcategory,
                   memo: row.memo
                 }));
               }
+              processedRows += 1;
               continue;
             }
 
-            let account;
-            let category;
-            try {
-              const hadAccount = state.refs.accountsByName.has(keyOfName(row.account));
-              account = await ensureAccount(row.account);
-              if (!hadAccount) createdAccounts += 1;
+            const pairIndex = findPairedTransferIndex(state.parsedRows, i, consumedIndexes);
+            const groupRows = pairIndex >= 0 ? [row, state.parsedRows[pairIndex]] : [row];
+            if (pairIndex >= 0) consumedIndexes.add(pairIndex);
 
-              const hadCategory = state.refs.categoriesByName.has(keyOfName(row.category));
-              category = await ensureCategory(row.category, row.amount);
-              if (!hadCategory) createdCategories += 1;
+            const groupAccounts = [];
+            const groupCategories = [];
+            try {
+              for (let g = 0; g < groupRows.length; g++) {
+                const groupRow = groupRows[g];
+                const hadAccount = state.refs.accountsByName.has(keyOfName(groupRow.account));
+                const account = await ensureAccount(groupRow.account);
+                if (!hadAccount) createdAccounts += 1;
+
+                const hadCategory = state.refs.categoriesByName.has(keyOfName(groupRow.category));
+                const category = await ensureCategory(groupRow.category, groupRow.amount);
+                if (!hadCategory) createdCategories += 1;
+
+                groupAccounts.push(account);
+                groupCategories.push(category);
+              }
 
               const txnBody = {
-                date: normalizeDateToNoonUtc(row.date),
-                payee: row.payee || null,
-                memo: row.memo || null,
+                date: normalizeDateToNoonUtc(groupRows[0].date),
+                payee: groupRows[0].payee || groupRows[1]?.payee || null,
+                memo: groupRows[0].memo || groupRows[1]?.memo || null,
                 source: "import:csv"
               };
 
-              if (useExternalId) txnBody.external_id = buildExternalId(fileName, row);
+              if (useExternalId) {
+                txnBody.external_id = groupRows.length === 2
+                  ? buildPairedExternalId(fileName, groupRows[0], groupRows[1])
+                  : buildExternalId(fileName, groupRows[0]);
+              }
 
               let txn;
               try {
@@ -785,26 +850,30 @@
                 const hasExternalIdError = !!(errTxn && errTxn.responseData && errTxn.responseData.data && errTxn.responseData.data.external_id);
                 const isDuplicate = useExternalId && errTxn && errTxn.status === 400 && (hasExternalIdError || String(errTxn.message || "").toLowerCase().includes("already exists"));
                 if (isDuplicate) {
-                  skipped += 1;
-                  pushLog("warn", "Line " + row.lineNo + " skipped: external_id already exists.");
+                  skipped += groupRows.length;
+                  processedRows += groupRows.length;
+                  pushLog("warn", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " skipped: external_id already exists.");
                   continue;
                 }
                 throw errTxn;
               }
 
               try {
-                const entryBody = {
-                  txn: txn.id,
-                  date: normalizeDateToNoonUtc(row.date),
-                  account: account.id,
-                  category: category.id,
-                  asset: usd.id,
-                  qty: row.amount,
-                  memo: row.memo || null,
-                  status: status
-                };
-                if (row.subcategory) entryBody.meta = { subcategory: row.subcategory };
-                await createRecord("entries", entryBody);
+                for (let g = 0; g < groupRows.length; g++) {
+                  const groupRow = groupRows[g];
+                  const entryBody = {
+                    txn: txn.id,
+                    date: normalizeDateToNoonUtc(groupRow.date),
+                    account: groupAccounts[g].id,
+                    category: groupCategories[g].id,
+                    asset: usd.id,
+                    qty: groupRow.amount,
+                    memo: groupRow.memo || null,
+                    status: groupRow.status
+                  };
+                  if (groupRow.subcategory) entryBody.meta = { subcategory: groupRow.subcategory };
+                  await createRecord("entries", entryBody);
+                }
               } catch (errEntry) {
                 try {
                   await deleteRecord("txns", txn.id);
@@ -813,15 +882,18 @@
               }
 
               createdTxns += 1;
-              createdEntries += 1;
+              createdEntries += groupRows.length;
+              if (groupRows.length === 2) pairedTxns += 1;
 
-              if ((i + 1) % 100 === 0) {
-                setStatus("", "Importing... " + (i + 1) + "/" + state.parsedRows.length + " rows processed.");
-                $("#importStats").textContent = "Processed " + (i + 1) + " / " + state.parsedRows.length + " rows...";
+              processedRows += groupRows.length;
+              if (processedRows % 100 === 0) {
+                setStatus("", "Importing... " + processedRows + "/" + state.parsedRows.length + " rows processed.");
+                $("#importStats").textContent = "Processed " + processedRows + " / " + state.parsedRows.length + " rows...";
               }
             } catch (rowErr) {
-              failed += 1;
-              pushLog("bad", "Line " + row.lineNo + " failed: " + (rowErr && rowErr.message ? rowErr.message : String(rowErr)));
+              failed += groupRows.length;
+              processedRows += groupRows.length;
+              pushLog("bad", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " failed: " + (rowErr && rowErr.message ? rowErr.message : String(rowErr)));
             }
           }
 
@@ -830,6 +902,7 @@
             "Import complete in " + elapsedSec + "s.",
             "Txns created: " + createdTxns,
             "Entries created: " + createdEntries,
+            "Paired transfers: " + pairedTxns,
             "Accounts created: " + createdAccounts,
             "Categories created: " + createdCategories,
             "Skipped: " + skipped,
@@ -857,7 +930,8 @@
         }
 
         const text = await state.file.text();
-        state.parsedRows = parseCsvRows(text);
+        const parsed = parseCsvRows(text);
+        state.parsedRows = parsed.rows;
         renderPreview();
         setBusy();
         const badRow = firstInvalidRow(state.parsedRows);
@@ -869,6 +943,7 @@
             account: badRow.account,
             category: badRow.category,
             amount: badRow.amount,
+            status: badRow.status,
             payee: badRow.payee,
             subcategory: badRow.subcategory,
             memo: badRow.memo
@@ -876,7 +951,8 @@
           pushLog("warn", "First invalid row after parse: " + JSON.stringify(details));
           setStatus("warn", "CSV parsed with invalid rows. First invalid row printed in Import Log.");
         } else {
-          setStatus("ok", "CSV parsed. Ready to import " + state.parsedRows.length + " rows.");
+          if (parsed.hasClearedColumn) setStatus("ok", "CSV parsed. Cleared column detected. Ready to import " + state.parsedRows.length + " rows.");
+          else setStatus("ok", "CSV parsed. No Cleared column found; defaulting all entry status values to cleared for " + state.parsedRows.length + " rows.");
         }
       }
 

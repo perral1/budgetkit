@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BudgetKit - Budget</title>
+  <style>
+    :root {
+      --bg: #0c1118;
+      --panel: #111a26;
+      --panel2: #19273b;
+      --line: #2b3d57;
+      --text: #e8eff8;
+      --muted: #aab9cc;
+      --accent: #6ec1ff;
+      --ok: #38d39f;
+      --warn: #ffd479;
+      --bad: #ff8a8a;
+      --radius: 12px;
+      --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--sans);
+      color: var(--text);
+      background: radial-gradient(circle at top right, #1a2941 0%, #0c1118 52%, #080c12 100%);
+    }
+    .wrap { max-width: 1600px; margin: 0 auto; padding: 16px; }
+    .topbar, .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(17, 26, 38, 0.92);
+      box-shadow: var(--shadow);
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px;
+    }
+    h1 { margin: 0; font-size: 18px; }
+    .sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .auth {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label { color: var(--muted); font-size: 12px; }
+    input[type="text"], input[type="password"], select {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(25, 39, 59, 0.95);
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(110, 193, 255, 0.15);
+    }
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: rgba(25, 39, 59, 0.95);
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { border-color: rgba(110, 193, 255, 0.55); background: rgba(110, 193, 255, 0.2); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .logout {
+      display: none;
+      margin-left: 8px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+    }
+    .status {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(14, 22, 33, 0.8);
+      color: var(--muted);
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+    .status.ok { border-color: rgba(56, 211, 159, 0.45); color: #c5f7e7; }
+    .status.warn { border-color: rgba(255, 212, 121, 0.45); color: #ffe9ba; }
+    .status.bad { border-color: rgba(255, 138, 138, 0.45); color: #ffd2d2; }
+    #app { display: none; margin-top: 12px; }
+    .panel { padding: 12px; }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .yearNav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .yearValue {
+      min-width: 70px;
+      text-align: center;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      font-family: var(--mono);
+    }
+    .small { color: var(--muted); font-size: 12px; }
+    .tableWrap {
+      overflow: auto;
+      border: 1px solid rgba(43, 61, 87, 0.65);
+      border-radius: 10px;
+      background: rgba(10, 16, 24, 0.65);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1320px;
+    }
+    th, td {
+      border-bottom: 1px solid rgba(43, 61, 87, 0.7);
+      border-right: 1px solid rgba(43, 61, 87, 0.35);
+      padding: 8px 7px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    th {
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: var(--muted);
+      font-size: 11px;
+      background: rgba(17, 26, 38, 0.92);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    thead tr:nth-child(2) th {
+      top: 34px;
+      z-index: 3;
+      background: rgba(17, 26, 38, 0.98);
+    }
+    th.cat, td.cat {
+      position: sticky;
+      left: 0;
+      z-index: 4;
+      background: rgba(17, 26, 38, 0.98);
+      min-width: 200px;
+    }
+    td.cat {
+      color: var(--text);
+      font-weight: 600;
+      max-width: 320px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+    td.num { text-align: right; font-family: var(--mono); }
+    td.positive { color: #bff7df; }
+    td.negative { color: #ffcccc; }
+    td.editable {
+      cursor: cell;
+      font-weight: 700;
+      text-decoration: underline dotted rgba(170, 185, 204, 0.55);
+      text-underline-offset: 2px;
+    }
+    td.editable.editing {
+      padding: 4px 6px;
+      background: rgba(110, 193, 255, 0.12);
+    }
+    .cellInput {
+      width: 100%;
+      height: 28px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: rgba(25, 39, 59, 0.95);
+      color: var(--text);
+      padding: 4px 8px;
+      font-family: var(--mono);
+      text-align: right;
+      outline: none;
+      min-width: 70px;
+    }
+    tr.total td {
+      font-weight: 700;
+      background: rgba(25, 39, 59, 0.65);
+    }
+    tr:hover td { background: rgba(110, 193, 255, 0.06); }
+    tr:hover td.cat { background: rgba(25, 39, 59, 0.95); }
+    @media (max-width: 900px) {
+      .auth .field { min-width: 100%; }
+      .auth input[type="text"], .auth input[type="password"] { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Budget <a class="logout" id="logoutLink" href="#">logout</a></h1>
+        <div class="sub">Year grid by category with monthly availability and selected-month detail.</div>
+      </div>
+      <div class="auth" id="authPanel">
+        <div class="field">
+          <label for="pbUrl">URL</label>
+          <input id="pbUrl" type="text" placeholder="http://127.0.0.1:8090" />
+        </div>
+        <div class="field">
+          <label for="pbEmail">Email</label>
+          <input id="pbEmail" type="text" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="pbPass">Password</label>
+          <input id="pbPass" type="password" placeholder="password" />
+        </div>
+        <button class="btn primary" id="btnLogin" type="button">Login</button>
+      </div>
+    </div>
+
+    <div id="statusBox" class="status">Not authenticated.</div>
+
+    <div id="app">
+      <section class="panel">
+        <div class="toolbar">
+          <div class="yearNav">
+            <button class="btn" id="btnPrevYear" type="button" aria-label="Previous year">&larr;</button>
+            <div id="yearValue" class="yearValue"></div>
+            <button class="btn" id="btnNextYear" type="button" aria-label="Next year">&rarr;</button>
+            <button class="btn" id="btnThisYear" type="button">Current Year</button>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button class="btn" id="btnRefresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <div class="small" id="summaryLine"></div>
+        <div class="tableWrap" style="margin-top:10px;">
+          <table aria-label="Budget by category and month">
+            <thead id="budgetHead"></thead>
+            <tbody id="budgetBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const $ = (sel) => document.querySelector(sel);
+      const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+      const store = {
+        get(k, d = "") { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+        set(k, v) { try { localStorage.setItem(k, String(v)); } catch {} },
+        del(k) { try { localStorage.removeItem(k); } catch {} }
+      };
+
+      const SESSION = { base: "", token: "" };
+      const now = new Date();
+      const state = {
+        loading: false,
+        year: now.getFullYear(),
+        selectedMonth: now.getMonth() + 1,
+        categories: [],
+        accounts: [],
+        budgetByCategoryMonth: new Map(),
+        budgetLineRecordByKey: new Map(),
+        activityByCategoryMonth: new Map(),
+        openingByCategory: new Map(),
+        tableRows: [],
+        editing: null
+      };
+
+      function escapeHtml(v) {
+        return String(v == null ? "" : v)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function fmtMoney(n) {
+        const value = Number(n || 0);
+        return value.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
+      }
+
+      function formatDateNoonUtc(y, m, d) {
+        const mm = String(m).padStart(2, "0");
+        const dd = String(d).padStart(2, "0");
+        return y + "-" + mm + "-" + dd + "T12:00:00Z";
+      }
+
+      function monthKey(y, m) {
+        return y + "-" + String(m).padStart(2, "0");
+      }
+
+      function setStatus(kind, message) {
+        const box = $("#statusBox");
+        box.className = "status" + (kind ? " " + kind : "");
+        box.textContent = message;
+      }
+
+      function setAuthenticatedUI(isLoggedIn) {
+        $("#authPanel").style.display = isLoggedIn ? "none" : "flex";
+        $("#logoutLink").style.display = isLoggedIn ? "inline" : "none";
+        $("#app").style.display = isLoggedIn ? "block" : "none";
+      }
+
+      function setBusy() {
+        const disabled = state.loading || !SESSION.token;
+        $("#btnRefresh").disabled = disabled;
+        $("#btnPrevYear").disabled = disabled;
+        $("#btnNextYear").disabled = disabled;
+        $("#btnThisYear").disabled = disabled;
+        $("#btnLogin").disabled = state.loading;
+      }
+
+      function classifyError(err) {
+        if (!err || typeof err !== "object") return { kind: "bad", message: String(err || "Unknown error") };
+        if (err.kind === "network") return { kind: "bad", message: "Network error: check URL, protocol (http/https), host, and CORS." };
+        if (err.kind === "auth") return { kind: "bad", message: "Auth failure: session expired or credentials/token were rejected." };
+        if (err.kind === "query") return { kind: "warn", message: "Query/schema mismatch (HTTP 400): fallback query was used." };
+        return { kind: "bad", message: err.message || "Request failed." };
+      }
+
+      async function pbFetch(path, options) {
+        if (!SESSION.base) {
+          const e = new Error("PocketBase URL is required.");
+          e.kind = "auth";
+          throw e;
+        }
+
+        const headers = Object.assign({ "Content-Type": "application/json" }, (options && options.headers) || {});
+        if (SESSION.token) headers.Authorization = /^Bearer\s+/i.test(SESSION.token) ? SESSION.token : ("Bearer " + SESSION.token);
+
+        let res;
+        try {
+          res = await fetch(SESSION.base + path, Object.assign({}, options || {}, { headers }));
+        } catch (error) {
+          const e = new Error("Network error (fetch failed): " + (error && error.message ? error.message : String(error)));
+          e.kind = "network";
+          throw e;
+        }
+
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+        if (!res.ok) {
+          const e = new Error("HTTP " + res.status + ": " + (typeof data === "string" ? data : JSON.stringify(data || {})));
+          e.status = res.status;
+          if (res.status === 401 || res.status === 403) e.kind = "auth";
+          else if (res.status === 400) e.kind = "query";
+          else e.kind = "bad";
+          throw e;
+        }
+
+        return data;
+      }
+
+      function toQS(params) {
+        return Object.keys(params)
+          .filter((k) => params[k] !== "" && params[k] != null)
+          .map((k) => encodeURIComponent(k) + "=" + encodeURIComponent(params[k]))
+          .join("&");
+      }
+
+      async function listRecordsSafe(collection, opts) {
+        const options = opts || {};
+        const perPage = options.perPage || 500;
+
+        async function runAttempt(params) {
+          const items = [];
+          let page = 1;
+          while (true) {
+            const qs = toQS(Object.assign({}, params, { page: page, perPage: perPage }));
+            const data = await pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records?" + qs, { method: "GET" });
+            const rows = Array.isArray(data && data.items) ? data.items : [];
+            items.push(...rows);
+            const totalPages = Math.max(1, Number((data && data.totalPages) || 1));
+            if (page >= totalPages) break;
+            page += 1;
+          }
+          return items;
+        }
+
+        const attempts = [
+          { filter: options.filter || "", sort: options.sort || "", expand: options.expand || "" },
+          { sort: options.sort || "", expand: options.expand || "" },
+          {}
+        ];
+
+        let saw400 = false;
+        for (const attempt of attempts) {
+          try {
+            return await runAttempt(attempt);
+          } catch (err) {
+            if (err && err.status === 400) {
+              saw400 = true;
+              continue;
+            }
+            throw err;
+          }
+        }
+
+        if (saw400) {
+          const e = new Error("HTTP 400 on all list query attempts.");
+          e.kind = "query";
+          throw e;
+        }
+
+        return [];
+      }
+
+      async function authWithPassword(email, password) {
+        return pbFetch("/api/collections/users/auth-with-password", {
+          method: "POST",
+          body: JSON.stringify({ identity: email, password: password })
+        });
+      }
+
+      async function authRefresh() {
+        return pbFetch("/api/collections/users/auth-refresh", { method: "POST" });
+      }
+
+      async function createRecord(collection, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records", {
+          method: "POST",
+          body: JSON.stringify(body)
+        });
+      }
+
+      async function updateRecord(collection, id, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify(body)
+        });
+      }
+
+      async function validateCachedSession() {
+        if (!SESSION.base || !SESSION.token) return false;
+        try {
+          const res = await authRefresh();
+          if (res && res.token) {
+            SESSION.token = res.token;
+            store.set("pbToken", res.token);
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      function buildGridRows() {
+        const rows = [];
+        const year = state.year;
+
+        for (const category of state.categories) {
+          const id = String(category.id);
+          let available = Number(state.openingByCategory.get(id) || 0);
+          const months = [];
+          for (let m = 1; m <= 12; m += 1) {
+            const key = id + "|" + monthKey(year, m);
+            const budgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
+            const activity = Number(state.activityByCategoryMonth.get(key) || 0);
+            available = available + budgeted + activity;
+            months.push({
+              budgeted: budgeted,
+              activity: activity,
+              spent: -activity,
+              available: available
+            });
+          }
+          rows.push({ id, name: String(category.name || ""), months });
+        }
+
+        state.tableRows = rows;
+      }
+
+      function renderTable() {
+        const selected = state.selectedMonth;
+        const head = $("#budgetHead");
+        const body = $("#budgetBody");
+
+        let top = '<tr><th class="cat" rowspan="2">Category</th>';
+        for (let m = 1; m <= 12; m += 1) {
+          if (m === selected) top += '<th colspan="3">' + MONTH_NAMES[m - 1] + "</th>";
+          else top += '<th rowspan="2" data-select-month="' + m + '" style="cursor:pointer;">' + MONTH_NAMES[m - 1] + "</th>";
+        }
+        top += "</tr>";
+
+        let sub = "<tr>";
+        for (let m = 1; m <= 12; m += 1) {
+          if (m === selected) {
+            sub += "<th>Budgeted</th><th>Spent</th><th>Available</th>";
+          }
+        }
+        sub += "</tr>";
+        head.innerHTML = top + sub;
+
+        const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+        const rowsHtml = [];
+        for (let rowIndex = 0; rowIndex < state.tableRows.length; rowIndex += 1) {
+          const row = state.tableRows[rowIndex];
+          let line = '<tr><td class="cat" title="' + escapeHtml(row.name) + '">' + escapeHtml(row.name) + "</td>";
+          for (let m = 1; m <= 12; m += 1) {
+            const cell = row.months[m - 1];
+            totals[m - 1].budgeted += cell.budgeted;
+            totals[m - 1].spent += cell.spent;
+            totals[m - 1].available += cell.available;
+            if (m === selected) {
+              line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + rowIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
+              line += '<td class="num ' + (cell.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.spent) + "</td>";
+              line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
+            } else {
+              line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
+            }
+          }
+          line += "</tr>";
+          rowsHtml.push(line);
+        }
+
+        let totalLine = '<tr class="total"><td class="cat">Total</td>';
+        for (let m = 1; m <= 12; m += 1) {
+          const t = totals[m - 1];
+          if (m === selected) {
+            totalLine += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+            totalLine += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+            totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+          } else {
+            totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
+          }
+        }
+        totalLine += "</tr>";
+        rowsHtml.push(totalLine);
+        body.innerHTML = rowsHtml.join("");
+
+        const selectedName = MONTH_NAMES[selected - 1];
+        $("#summaryLine").textContent = "Categories: " + state.tableRows.length + ". Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
+        $("#yearValue").textContent = String(state.year);
+      }
+
+      function parseMoneyInput(raw) {
+        let s = String(raw == null ? "" : raw).trim();
+        if (!s) return null;
+        s = s.replaceAll(",", "").replaceAll("$", "").trim();
+        if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
+        const n = Number(s);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function stopEditing() {
+        state.editing = null;
+      }
+
+      function beginEditByRowIndex(rowIndex) {
+        if (rowIndex < 0 || rowIndex >= state.tableRows.length) {
+          stopEditing();
+          return;
+        }
+        const row = state.tableRows[rowIndex];
+        beginEditCell(String(row.id), rowIndex);
+      }
+
+      function beginEditCell(categoryId, rowIndex) {
+        if (state.loading) return;
+        if (state.editing) return;
+        const selector = 'td[data-edit-budgeted="1"][data-category-id="' + categoryId.replaceAll('"', '\\"') + '"][data-row-index="' + rowIndex + '"]';
+        const cell = document.querySelector(selector);
+        if (!cell) return;
+
+        const key = categoryId + "|" + monthKey(state.year, state.selectedMonth);
+        const current = Number(state.budgetByCategoryMonth.get(key) || 0);
+        state.editing = { categoryId: categoryId, rowIndex: rowIndex, original: current };
+
+        cell.classList.add("editing");
+        cell.innerHTML = '<input type="text" class="cellInput" />';
+        const input = cell.querySelector("input");
+        input.value = String(current);
+        input.focus();
+        input.select();
+
+        input.addEventListener("keydown", async (ev) => {
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            renderTable();
+            stopEditing();
+            setStatus("ok", "Edit canceled.");
+            return;
+          }
+          if (ev.key === "Enter") {
+            ev.preventDefault();
+            const direction = ev.shiftKey ? -1 : 1;
+            await saveCurrentEditAndNavigate({ rowDelta: direction });
+            return;
+          }
+          if (ev.key === "ArrowDown") {
+            ev.preventDefault();
+            await saveCurrentEditAndNavigate({ rowDelta: 1 });
+            return;
+          }
+          if (ev.key === "ArrowUp") {
+            ev.preventDefault();
+            await saveCurrentEditAndNavigate({ rowDelta: -1 });
+            return;
+          }
+          if (ev.key === "ArrowLeft") {
+            ev.preventDefault();
+            await saveCurrentEditAndNavigate({ monthDelta: -1 });
+            return;
+          }
+          if (ev.key === "ArrowRight") {
+            ev.preventDefault();
+            await saveCurrentEditAndNavigate({ monthDelta: 1 });
+          }
+        });
+      }
+
+      function resolveNextEditTarget(nav, currentEdit) {
+        const out = { rowIndex: null, categoryId: "", month: state.selectedMonth };
+        if (!nav || typeof nav !== "object") return out;
+        if (Number.isFinite(nav.rowDelta)) {
+          const nextRow = currentEdit.rowIndex + nav.rowDelta;
+          if (nextRow >= 0 && nextRow < state.tableRows.length) {
+            const nextRowObj = state.tableRows[nextRow];
+            out.rowIndex = nextRow;
+            out.categoryId = String(nextRowObj.id);
+          }
+          return out;
+        }
+        if (Number.isFinite(nav.monthDelta)) {
+          const nextMonth = state.selectedMonth + nav.monthDelta;
+          if (nextMonth >= 1 && nextMonth <= 12) {
+            out.month = nextMonth;
+            out.rowIndex = currentEdit.rowIndex;
+            out.categoryId = currentEdit.categoryId;
+          }
+          return out;
+        }
+        if (typeof nav.rowIndex === "number" && Number.isFinite(nav.rowIndex) && typeof nav.categoryId === "string" && nav.categoryId) {
+          if (nav.rowIndex >= 0 && nav.rowIndex < state.tableRows.length) {
+            out.rowIndex = nav.rowIndex;
+            out.categoryId = nav.categoryId;
+          }
+          return out;
+        }
+        return out;
+      }
+
+      async function saveCurrentEditAndNavigate(nav) {
+        if (!state.editing || state.loading) return;
+        const edit = state.editing;
+        const selector = 'td[data-edit-budgeted="1"][data-category-id="' + edit.categoryId.replaceAll('"', '\\"') + '"][data-row-index="' + edit.rowIndex + '"]';
+        const cell = document.querySelector(selector);
+        if (!cell) {
+          stopEditing();
+          return;
+        }
+        const input = cell.querySelector("input");
+        if (!input) {
+          stopEditing();
+          return;
+        }
+
+        const parsed = parseMoneyInput(input.value);
+        if (parsed == null) {
+          setStatus("bad", "Invalid budgeted value.");
+          input.focus();
+          input.select();
+          return;
+        }
+
+        state.loading = true;
+        setBusy();
+        let saved = false;
+        try {
+          const month = monthKey(state.year, state.selectedMonth);
+          const key = edit.categoryId + "|" + month;
+          const existing = state.budgetLineRecordByKey.get(key);
+          if (existing && existing.id) {
+            await updateRecord("budget_lines", existing.id, { budgeted: parsed });
+            existing.budgeted = parsed;
+            state.budgetLineRecordByKey.set(key, existing);
+          } else {
+            const created = await createRecord("budget_lines", {
+              month: month,
+              category: edit.categoryId,
+              budgeted: parsed
+            });
+            state.budgetLineRecordByKey.set(key, {
+              id: String(created && created.id ? created.id : ""),
+              budgeted: parsed
+            });
+          }
+          state.budgetByCategoryMonth.set(key, parsed);
+          saved = true;
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Save failed: " + (err && err.message ? err.message : info.message));
+          input.focus();
+          input.select();
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+
+        if (!saved) return;
+
+        const next = resolveNextEditTarget(nav, edit);
+        stopEditing();
+        if (Number.isFinite(next.month) && next.month >= 1 && next.month <= 12) state.selectedMonth = next.month;
+        buildGridRows();
+        renderTable();
+        setStatus("ok", "Budgeted value saved.");
+        if (next.rowIndex != null && next.categoryId) beginEditCell(next.categoryId, next.rowIndex);
+      }
+
+      function resetModuleData() {
+        state.categories = [];
+        state.accounts = [];
+        state.budgetByCategoryMonth = new Map();
+        state.budgetLineRecordByKey = new Map();
+        state.activityByCategoryMonth = new Map();
+        state.openingByCategory = new Map();
+        state.tableRows = [];
+        state.editing = null;
+        $("#budgetHead").innerHTML = "";
+        $("#budgetBody").innerHTML = "";
+        $("#summaryLine").textContent = "";
+      }
+
+      async function loadBudgetData() {
+        const year = state.year;
+        const startOfYear = formatDateNoonUtc(year, 1, 1);
+        const endOfYear = formatDateNoonUtc(year, 12, 31);
+        const janKey = monthKey(year, 1);
+        const decKey = monthKey(year, 12);
+
+        const [categories, accounts, budgetLines, entries] = await Promise.all([
+          listRecordsSafe("categories", {
+            filter: 'kind = "expense" && is_archived = false',
+            sort: "name",
+            perPage: 500
+          }),
+          listRecordsSafe("accounts", {
+            filter: "is_archived = false",
+            sort: "name",
+            perPage: 500
+          }),
+          listRecordsSafe("budget_lines", {
+            filter: 'month <= "' + decKey + '"',
+            sort: "month",
+            perPage: 500
+          }),
+          listRecordsSafe("entries", {
+            filter: 'status = "cleared" && date <= "' + endOfYear + '"',
+            sort: "date",
+            perPage: 500
+          })
+        ]);
+
+        const categoriesById = new Map(categories.map((c) => [String(c.id), c]));
+        const nonVirtualAccountIds = new Set(
+          accounts.filter((a) => String(a.type || "") !== "virtual").map((a) => String(a.id))
+        );
+
+        state.categories = categories
+          .filter((c) => String(c.kind || "") === "expense" && c.is_archived !== true)
+          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+        state.accounts = accounts;
+
+        const budgetByMonth = new Map();
+        const budgetLineRecordByKey = new Map();
+        const openingByCategory = new Map();
+        for (const line of budgetLines) {
+          const catId = String(line.category || "");
+          const month = String(line.month || "");
+          const amount = Number(line.budgeted || 0);
+          if (!catId || !month || !Number.isFinite(amount)) continue;
+          if (!categoriesById.has(catId)) continue;
+          if (month < janKey) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + amount);
+          if (month >= janKey && month <= decKey) {
+            const key = catId + "|" + month;
+            budgetByMonth.set(key, Number(budgetByMonth.get(key) || 0) + amount);
+            if (!budgetLineRecordByKey.has(key)) {
+              budgetLineRecordByKey.set(key, { id: String(line.id || ""), budgeted: amount });
+            }
+          }
+        }
+
+        const activityByMonth = new Map();
+        for (const entry of entries) {
+          const catId = String(entry.category || "");
+          if (!catId || !categoriesById.has(catId)) continue;
+          const cat = categoriesById.get(catId);
+          if (!cat || String(cat.kind || "") !== "expense") continue;
+          const accountId = String(entry.account || "");
+          if (!nonVirtualAccountIds.has(accountId)) continue;
+          const dateStr = String(entry.date || "");
+          if (!dateStr) continue;
+          const month = dateStr.slice(0, 7);
+          if (!/^\d{4}-\d{2}$/.test(month)) continue;
+          const qty = Number(entry.qty || 0);
+          if (!Number.isFinite(qty)) continue;
+          if (dateStr < startOfYear) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
+          if (month >= janKey && month <= decKey) {
+            const key = catId + "|" + month;
+            activityByMonth.set(key, Number(activityByMonth.get(key) || 0) + qty);
+          }
+        }
+
+        state.budgetByCategoryMonth = budgetByMonth;
+        state.budgetLineRecordByKey = budgetLineRecordByKey;
+        state.activityByCategoryMonth = activityByMonth;
+        state.openingByCategory = openingByCategory;
+      }
+
+      async function refreshAll() {
+        if (!SESSION.token) return;
+        state.loading = true;
+        setBusy();
+        try {
+          await loadBudgetData();
+          buildGridRows();
+          renderTable();
+          setStatus("ok", "Loaded budget grid for " + state.year + ".");
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Load failed: " + (err && err.message ? err.message : info.message));
+          if (err && err.kind === "auth") {
+            SESSION.token = "";
+            store.del("pbToken");
+            resetModuleData();
+            setAuthenticatedUI(false);
+          }
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      $("#btnLogin").addEventListener("click", async () => {
+        const base = $("#pbUrl").value.trim().replace(/\/+$/, "");
+        const email = $("#pbEmail").value.trim();
+        const password = $("#pbPass").value;
+        if (!base || !email || !password) {
+          setStatus("bad", "Login failed: URL, email, and password are required.");
+          return;
+        }
+
+        store.set("pbUrl", base);
+        store.set("pbEmail", email);
+
+        state.loading = true;
+        setBusy();
+        try {
+          SESSION.base = base;
+          SESSION.token = "";
+          const res = await authWithPassword(email, password);
+          if (!res || !res.token) throw new Error("No token returned by PocketBase.");
+          SESSION.token = res.token;
+          store.set("pbToken", res.token);
+          setAuthenticatedUI(true);
+          setStatus("ok", "Login succeeded. Session saved in localStorage.");
+          await refreshAll();
+        } catch (err) {
+          SESSION.token = "";
+          store.del("pbToken");
+          setAuthenticatedUI(false);
+          const info = classifyError(err);
+          setStatus(info.kind, "Login failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          $("#pbPass").value = "";
+          setBusy();
+        }
+      });
+
+      $("#logoutLink").addEventListener("click", (ev) => {
+        ev.preventDefault();
+        SESSION.base = "";
+        SESSION.token = "";
+        store.del("pbUrl");
+        store.del("pbEmail");
+        store.del("pbToken");
+        $("#pbUrl").value = "";
+        $("#pbEmail").value = "";
+        $("#pbPass").value = "";
+        resetModuleData();
+        setAuthenticatedUI(false);
+        setStatus("ok", "Logged out. Local session cleared.");
+        setBusy();
+      });
+
+      $("#btnRefresh").addEventListener("click", refreshAll);
+      $("#btnPrevYear").addEventListener("click", async () => {
+        if (state.loading) return;
+        state.year -= 1;
+        await refreshAll();
+      });
+      $("#btnNextYear").addEventListener("click", async () => {
+        if (state.loading) return;
+        state.year += 1;
+        await refreshAll();
+      });
+      $("#btnThisYear").addEventListener("click", async () => {
+        if (state.loading) return;
+        state.year = new Date().getFullYear();
+        await refreshAll();
+      });
+
+      $("#budgetBody").addEventListener("dblclick", async (ev) => {
+        const cell = ev.target && ev.target.closest ? ev.target.closest('td[data-edit-budgeted="1"]') : null;
+        if (!cell) return;
+        const categoryId = String(cell.getAttribute("data-category-id") || "");
+        const rowIndex = Number(cell.getAttribute("data-row-index"));
+        if (!categoryId || !Number.isFinite(rowIndex)) return;
+        if (state.editing) {
+          if (state.editing.categoryId === categoryId && state.editing.rowIndex === rowIndex) return;
+          await saveCurrentEditAndNavigate({ categoryId: categoryId, rowIndex: rowIndex });
+          return;
+        }
+        beginEditCell(categoryId, rowIndex);
+      });
+
+      $("#app").addEventListener("click", async (ev) => {
+        const target = ev.target && ev.target.closest ? ev.target.closest("[data-select-month]") : null;
+        if (!target || state.loading) return;
+        const m = Number(target.getAttribute("data-select-month"));
+        if (!Number.isFinite(m) || m < 1 || m > 12 || m === state.selectedMonth) return;
+        if (state.editing) {
+          await saveCurrentEditAndNavigate({ monthDelta: m - state.selectedMonth });
+          return;
+        }
+        state.selectedMonth = m;
+        renderTable();
+      });
+
+      $("#pbUrl").value = store.get("pbUrl", "");
+      $("#pbEmail").value = store.get("pbEmail", "");
+      $("#yearValue").textContent = String(state.year);
+
+      (async function init() {
+        SESSION.base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+        SESSION.token = (store.get("pbToken", "") || "").trim();
+
+        if (SESSION.base && SESSION.token) {
+          const ok = await validateCachedSession();
+          if (ok) {
+            setAuthenticatedUI(true);
+            setStatus("ok", "Session restored via auth-refresh.");
+            await refreshAll();
+            return;
+          }
+          SESSION.token = "";
+          store.del("pbToken");
+        }
+
+        setAuthenticatedUI(false);
+        setStatus("warn", "Not logged in. Enter URL, email, and password.");
+        setBusy();
+      })();
+    })();
+  </script>
+</body>
+</html>
