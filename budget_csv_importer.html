@@ -1,0 +1,991 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BudgetKit - Budget CSV Importer</title>
+  <style>
+    :root {
+      --bg: #0b1118;
+      --panel: #121d2a;
+      --panel2: #1a2a3c;
+      --line: #2a3f59;
+      --text: #e8eef7;
+      --muted: #a9b9cd;
+      --accent: #72c4ff;
+      --ok: #3ed598;
+      --warn: #ffd479;
+      --bad: #ff8f8f;
+      --radius: 12px;
+      --shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+      --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--sans);
+      color: var(--text);
+      background: radial-gradient(circle at top right, #1b2d44 0%, #0b1118 52%, #070c12 100%);
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+    .topbar, .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(18, 29, 42, 0.92);
+      box-shadow: var(--shadow);
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 12px;
+    }
+    h1 { margin: 0; font-size: 18px; }
+    .sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .auth {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    label { color: var(--muted); font-size: 12px; }
+    input[type="text"], input[type="password"], input[type="file"], select {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(26, 42, 60, 0.95);
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(114, 196, 255, 0.15);
+    }
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: rgba(26, 42, 60, 0.95);
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary {
+      border-color: rgba(114, 196, 255, 0.55);
+      background: rgba(114, 196, 255, 0.2);
+    }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .logout {
+      display: none;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+    .status {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(14, 22, 33, 0.8);
+      color: var(--muted);
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+    .status.ok { border-color: rgba(62, 213, 152, 0.45); color: #c2f6e3; }
+    .status.warn { border-color: rgba(255, 212, 121, 0.45); color: #ffe9bc; }
+    .status.bad { border-color: rgba(255, 143, 143, 0.45); color: #ffd0d0; }
+    #app { display: none; margin-top: 12px; }
+    .panel { padding: 12px; margin-bottom: 12px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .dropzone {
+      border: 2px dashed rgba(114, 196, 255, 0.45);
+      border-radius: 12px;
+      padding: 18px;
+      text-align: center;
+      color: var(--muted);
+      background: rgba(26, 42, 60, 0.35);
+      transition: border-color 120ms, background-color 120ms;
+      margin-top: 10px;
+    }
+    .dropzone.active {
+      border-color: rgba(62, 213, 152, 0.7);
+      background: rgba(62, 213, 152, 0.12);
+      color: #c2f6e3;
+    }
+    .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .help { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td {
+      border-bottom: 1px solid rgba(42, 63, 89, 0.75);
+      padding: 8px 6px;
+      font-size: 12px;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    .log {
+      max-height: 240px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      background: rgba(14, 22, 33, 0.75);
+      font-family: var(--mono);
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .logLine { margin-bottom: 4px; }
+    .logLine.bad { color: #ffd0d0; }
+    .logLine.warn { color: #ffe9bc; }
+    .logLine.ok { color: #c2f6e3; }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--muted);
+      background: rgba(14, 22, 33, 0.75);
+    }
+    @media (max-width: 760px) {
+      .auth .field { min-width: 100%; }
+      .auth input[type="text"], .auth input[type="password"] { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Budget CSV Importer <a class="logout" id="logoutLink" href="#">logout</a></h1>
+        <div class="sub">Imports month/category values into <code>budget_lines</code> from a wide CSV like <code>imports/budget.csv</code>.</div>
+      </div>
+      <div class="auth" id="authPanel">
+        <div class="field">
+          <label for="pbUrl">URL</label>
+          <input id="pbUrl" type="text" placeholder="http://127.0.0.1:8090" />
+        </div>
+        <div class="field">
+          <label for="pbEmail">Email</label>
+          <input id="pbEmail" type="text" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="pbPass">Password</label>
+          <input id="pbPass" type="password" placeholder="password" />
+        </div>
+        <button class="btn primary" id="btnLogin" type="button">Login</button>
+      </div>
+    </div>
+
+    <div class="status" id="statusBox">Not authenticated.</div>
+
+    <div id="app">
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;">
+          <h2 style="margin:0;font-size:14px;">CSV File</h2>
+          <button class="btn" id="btnClearFile" type="button">Clear File</button>
+        </div>
+
+        <div id="dropzone" class="dropzone">Drag and drop CSV here, or choose file below.</div>
+
+        <div class="row" style="margin-top:10px;">
+          <div class="field" style="flex:1;min-width:260px;">
+            <label for="csvFile">File</label>
+            <input id="csvFile" type="file" accept=".csv,text/csv" />
+          </div>
+          <div class="field">
+            <label for="optCreateMissing">Missing Categories</label>
+            <select id="optCreateMissing">
+              <option value="1" selected>Create missing categories</option>
+              <option value="0">Skip unknown categories</option>
+            </select>
+          </div>
+          <button class="btn" id="btnPreview" type="button">Parse Preview</button>
+          <button class="btn primary" id="btnImport" type="button" disabled>Import CSV</button>
+        </div>
+
+        <div class="help" style="margin-top:8px;">
+          Expected format: first row is headers, first column is date/month, remaining columns are category names. Row date supports <code>YYYY-MM</code> or <code>YYYY-MM-DD</code>. Blank value cells are skipped.
+        </div>
+
+        <div class="mono" id="fileInfo" style="margin-top:8px;">No file loaded.</div>
+      </section>
+
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;">
+          <h2 style="margin:0;font-size:14px;">Preview</h2>
+          <span id="previewPill" class="pill">No parsed rows</span>
+        </div>
+        <div class="mono" id="previewSummary" style="margin-top:8px;">No parsed rows.</div>
+        <div style="overflow:auto;margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Line</th>
+                <th>Month</th>
+                <th>Populated Cells</th>
+                <th>Sample Categories</th>
+              </tr>
+            </thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 style="margin:0 0 10px;font-size:14px;">Import Log</h2>
+        <div class="mono" id="importStats" style="margin-bottom:8px;">No import run yet.</div>
+        <div id="logBox" class="log"></div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const $ = (s, el) => (el || document).querySelector(s);
+
+      const store = {
+        get(k, d = "") { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+        set(k, v) { try { localStorage.setItem(k, String(v)); } catch {} },
+        del(k) { try { localStorage.removeItem(k); } catch {} }
+      };
+
+      const SESSION = { base: "", token: "" };
+      const state = {
+        file: null,
+        parsed: null,
+        importing: false,
+        refs: {
+          categoriesByName: new Map(),
+          budgetLineByKey: new Map()
+        }
+      };
+
+      function setStatus(kind, message) {
+        const box = $("#statusBox");
+        box.className = "status" + (kind ? " " + kind : "");
+        box.textContent = message;
+      }
+
+      function setAuthenticatedUI(isLoggedIn) {
+        $("#authPanel").style.display = isLoggedIn ? "none" : "flex";
+        $("#logoutLink").style.display = isLoggedIn ? "inline" : "none";
+        $("#app").style.display = isLoggedIn ? "block" : "none";
+      }
+
+      function setBusy() {
+        const isAuthed = !!SESSION.token;
+        const hasParsed = !!(state.parsed && state.parsed.rows.length);
+        const disabled = state.importing;
+
+        $("#btnLogin").disabled = disabled;
+        $("#btnClearFile").disabled = disabled;
+        $("#csvFile").disabled = !isAuthed || disabled;
+        $("#btnPreview").disabled = !isAuthed || !state.file || disabled;
+        $("#btnImport").disabled = !isAuthed || !hasParsed || disabled;
+        $("#optCreateMissing").disabled = disabled;
+      }
+
+      function classifyError(err) {
+        if (!err || typeof err !== "object") return { kind: "bad", message: String(err || "Unknown error") };
+        if (err.kind === "network") return { kind: "bad", message: "Network error: check URL, protocol (http/https), host, and CORS." };
+        if (err.kind === "auth") return { kind: "bad", message: "Auth failure: session expired or credentials/token were rejected." };
+        if (err.kind === "query") return { kind: "warn", message: "Query/schema mismatch (HTTP 400): fallback query was used." };
+        return { kind: "bad", message: err.message || "Request failed." };
+      }
+
+      function pushLog(kind, msg) {
+        const box = $("#logBox");
+        const line = document.createElement("div");
+        line.className = "logLine" + (kind ? " " + kind : "");
+        line.textContent = msg;
+        box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+      }
+
+      function clearLog() {
+        $("#logBox").innerHTML = "";
+      }
+
+      function escapeHtml(v) {
+        return String(v == null ? "" : v)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function toQS(params) {
+        return Object.keys(params)
+          .filter((k) => params[k] !== "" && params[k] != null)
+          .map((k) => encodeURIComponent(k) + "=" + encodeURIComponent(params[k]))
+          .join("&");
+      }
+
+      async function pbFetch(path, options) {
+        if (!SESSION.base) {
+          const e = new Error("PocketBase URL is required.");
+          e.kind = "auth";
+          throw e;
+        }
+
+        const headers = Object.assign({ "Content-Type": "application/json" }, (options && options.headers) || {});
+        if (SESSION.token) headers.Authorization = /^Bearer\s+/i.test(SESSION.token) ? SESSION.token : ("Bearer " + SESSION.token);
+
+        let res;
+        try {
+          res = await fetch(SESSION.base + path, Object.assign({}, options || {}, { headers }));
+        } catch (error) {
+          const e = new Error("Network error (fetch failed): " + (error && error.message ? error.message : String(error)));
+          e.kind = "network";
+          throw e;
+        }
+
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+        if (!res.ok) {
+          const e = new Error("HTTP " + res.status + ": " + (typeof data === "string" ? data : JSON.stringify(data || {})));
+          e.status = res.status;
+          if (res.status === 401 || res.status === 403) e.kind = "auth";
+          else if (res.status === 400) e.kind = "query";
+          else e.kind = "bad";
+          throw e;
+        }
+
+        return data;
+      }
+
+      async function authWithPassword(email, password) {
+        return pbFetch("/api/collections/users/auth-with-password", {
+          method: "POST",
+          body: JSON.stringify({ identity: email, password: password })
+        });
+      }
+
+      async function authRefresh() {
+        return pbFetch("/api/collections/users/auth-refresh", { method: "POST" });
+      }
+
+      async function listRecordsSafe(collection, opts) {
+        const options = opts || {};
+        const perPage = options.perPage || 500;
+
+        async function runAttempt(params) {
+          const items = [];
+          let page = 1;
+          while (true) {
+            const qs = toQS(Object.assign({}, params, { page: page, perPage: perPage }));
+            const data = await pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records?" + qs, { method: "GET" });
+            const rows = Array.isArray(data && data.items) ? data.items : [];
+            items.push(...rows);
+            const totalPages = Math.max(1, Number((data && data.totalPages) || 1));
+            if (page >= totalPages) break;
+            page += 1;
+          }
+          return items;
+        }
+
+        const attempts = [
+          { filter: options.filter || "", sort: options.sort || "", expand: options.expand || "" },
+          { sort: options.sort || "", expand: options.expand || "" },
+          {}
+        ];
+
+        let saw400 = false;
+        for (const attempt of attempts) {
+          try {
+            return await runAttempt(attempt);
+          } catch (err) {
+            if (err && err.status === 400) {
+              saw400 = true;
+              continue;
+            }
+            throw err;
+          }
+        }
+
+        if (saw400) {
+          const e = new Error("HTTP 400 on all list query attempts.");
+          e.kind = "query";
+          throw e;
+        }
+
+        return [];
+      }
+
+      async function createRecord(collection, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records", {
+          method: "POST",
+          body: JSON.stringify(body)
+        });
+      }
+
+      async function updateRecord(collection, id, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify(body)
+        });
+      }
+
+      function csvParse(text) {
+        const rows = [];
+        let i = 0;
+        let cell = "";
+        let row = [];
+        let inQuotes = false;
+
+        while (i < text.length) {
+          const ch = text[i];
+
+          if (inQuotes) {
+            if (ch === '"') {
+              if (text[i + 1] === '"') {
+                cell += '"';
+                i += 2;
+                continue;
+              }
+              inQuotes = false;
+              i += 1;
+              continue;
+            }
+            cell += ch;
+            i += 1;
+            continue;
+          }
+
+          if (ch === '"') {
+            inQuotes = true;
+            i += 1;
+            continue;
+          }
+
+          if (ch === ",") {
+            row.push(cell);
+            cell = "";
+            i += 1;
+            continue;
+          }
+
+          if (ch === "\n") {
+            row.push(cell);
+            rows.push(row);
+            row = [];
+            cell = "";
+            i += 1;
+            continue;
+          }
+
+          if (ch === "\r") {
+            i += 1;
+            continue;
+          }
+
+          cell += ch;
+          i += 1;
+        }
+
+        if (cell.length || row.length) {
+          row.push(cell);
+          rows.push(row);
+        }
+
+        return rows;
+      }
+
+      function normalizeMonth(raw) {
+        const s = String(raw || "").trim();
+        if (!s) return "";
+        if (/^\d{4}-\d{2}$/.test(s)) return s;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.slice(0, 7);
+        const d = new Date(s);
+        if (Number.isNaN(d.getTime())) return "";
+        return d.toISOString().slice(0, 7);
+      }
+
+      function parseAmount(raw) {
+        let s = String(raw == null ? "" : raw).trim();
+        if (!s) return null;
+        s = s.replaceAll("$", "").replaceAll(",", "").trim();
+        if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
+        const n = Number(s);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function keyOfName(name) {
+        return String(name || "").trim().toLowerCase();
+      }
+
+      function categoryKindFromHeader(name) {
+        const s = keyOfName(name);
+        if (s.startsWith("income:")) return "income";
+        if (s === "income") return "income";
+        return "expense";
+      }
+
+      function parseBudgetCsv(text) {
+        const matrix = csvParse(text);
+        if (!matrix.length) throw new Error("CSV is empty.");
+
+        const headerRow = matrix[0].map((h) => String(h == null ? "" : h).trim());
+        if (headerRow.length < 2) throw new Error("CSV needs at least 2 columns (month + one category).");
+
+        const categoryColumns = [];
+        const seen = new Set();
+        const warnings = [];
+
+        for (let c = 1; c < headerRow.length; c += 1) {
+          const name = headerRow[c];
+          if (!name) {
+            warnings.push("Header column " + (c + 1) + " is blank and will be skipped.");
+            continue;
+          }
+          const key = keyOfName(name);
+          if (seen.has(key)) {
+            warnings.push("Duplicate category header '" + name + "' ignored at column " + (c + 1) + ".");
+            continue;
+          }
+          seen.add(key);
+          categoryColumns.push({ col: c, name: name, key: key });
+        }
+
+        if (!categoryColumns.length) throw new Error("No usable category columns found in header row.");
+
+        const rows = [];
+        const invalidRows = [];
+        let numericCellCount = 0;
+
+        for (let r = 1; r < matrix.length; r += 1) {
+          const line = matrix[r] || [];
+          const allBlank = line.every((v) => String(v || "").trim() === "");
+          if (allBlank) continue;
+
+          const month = normalizeMonth(line[0]);
+          if (!month) {
+            invalidRows.push({ lineNo: r + 1, reason: "Invalid month/date in first column", rawMonth: String(line[0] || "") });
+            continue;
+          }
+
+          const values = [];
+          const badCells = [];
+
+          for (const col of categoryColumns) {
+            const raw = line[col.col];
+            const str = String(raw == null ? "" : raw).trim();
+            if (!str) continue;
+            const num = parseAmount(str);
+            if (num == null) {
+              badCells.push(col.name + "='" + str + "'");
+              continue;
+            }
+            values.push({
+              categoryName: col.name,
+              categoryKey: col.key,
+              amount: num
+            });
+            numericCellCount += 1;
+          }
+
+          if (badCells.length) {
+            invalidRows.push({
+              lineNo: r + 1,
+              reason: "Invalid numeric cell(s): " + badCells.join(", "),
+              rawMonth: String(line[0] || "")
+            });
+          }
+
+          rows.push({
+            lineNo: r + 1,
+            month: month,
+            values: values
+          });
+        }
+
+        const months = Array.from(new Set(rows.map((r) => r.month))).sort();
+
+        return {
+          categoryColumns,
+          rows,
+          months,
+          numericCellCount,
+          invalidRows,
+          warnings
+        };
+      }
+
+      function renderPreview() {
+        const parsed = state.parsed;
+        const body = $("#previewBody");
+        if (!parsed) {
+          body.innerHTML = "";
+          $("#previewSummary").textContent = "No parsed rows.";
+          $("#previewPill").textContent = "No parsed rows";
+          return;
+        }
+
+        const rows = parsed.rows.slice(0, 15);
+        body.innerHTML = rows.map((row) => {
+          const sample = row.values.slice(0, 4).map((v) => v.categoryName + "=" + v.amount).join("; ");
+          return "<tr>" +
+            "<td>" + row.lineNo + "</td>" +
+            "<td>" + escapeHtml(row.month) + "</td>" +
+            "<td>" + row.values.length + "</td>" +
+            "<td title=\"" + escapeHtml(sample) + "\">" + escapeHtml(sample || "(no populated cells)") + "</td>" +
+            "</tr>";
+        }).join("");
+
+        const summary = [
+          "Rows: " + parsed.rows.length,
+          "Months: " + parsed.months.length,
+          "Categories: " + parsed.categoryColumns.length,
+          "Numeric cells: " + parsed.numericCellCount,
+          "Invalid rows: " + parsed.invalidRows.length
+        ].join(". ") + ".";
+
+        $("#previewSummary").textContent = summary;
+        $("#previewPill").textContent = parsed.rows.length + " rows";
+      }
+
+      async function loadReferenceData(minMonth, maxMonth) {
+        const [categories, budgetLines] = await Promise.all([
+          listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 1000 }),
+          listRecordsSafe("budget_lines", {
+            filter: minMonth && maxMonth
+              ? ('month >= "' + minMonth + '" && month <= "' + maxMonth + '"')
+              : "",
+            sort: "month",
+            perPage: 1000
+          })
+        ]);
+
+        state.refs.categoriesByName = new Map(categories.map((c) => [keyOfName(c.name), c]));
+        const byKey = new Map();
+        for (const line of budgetLines) {
+          const month = String(line.month || "");
+          const catId = String(line.category || "");
+          if (!month || !catId) continue;
+          byKey.set(month + "|" + catId, line);
+        }
+        state.refs.budgetLineByKey = byKey;
+      }
+
+      async function ensureCategoryByName(categoryName, createMissing) {
+        const key = keyOfName(categoryName);
+        const existing = state.refs.categoriesByName.get(key);
+        if (existing) return existing;
+
+        if (!createMissing) return null;
+
+        const created = await createRecord("categories", {
+          name: categoryName,
+          kind: categoryKindFromHeader(categoryName),
+          is_archived: false
+        });
+
+        state.refs.categoriesByName.set(key, created);
+        pushLog("ok", "Created category: " + categoryName + " [" + created.kind + "] (" + created.id + ").");
+        return created;
+      }
+
+      async function importParsedBudget() {
+        if (!state.parsed || !state.parsed.rows.length) {
+          setStatus("warn", "Parse a CSV first.");
+          return;
+        }
+
+        state.importing = true;
+        setBusy();
+        clearLog();
+
+        const started = Date.now();
+        const createMissing = $("#optCreateMissing").value === "1";
+
+        let createdLines = 0;
+        let updatedLines = 0;
+        let unchanged = 0;
+        let failed = 0;
+        let skippedUnknownCategory = 0;
+
+        try {
+          const months = state.parsed.months;
+          const minMonth = months.length ? months[0] : "";
+          const maxMonth = months.length ? months[months.length - 1] : "";
+          setStatus("", "Loading categories and existing budget lines...");
+          await loadReferenceData(minMonth, maxMonth);
+
+          for (const row of state.parsed.rows) {
+            for (const cell of row.values) {
+              try {
+                const category = await ensureCategoryByName(cell.categoryName, createMissing);
+                if (!category) {
+                  skippedUnknownCategory += 1;
+                  pushLog("warn", "Line " + row.lineNo + " " + row.month + " skipped unknown category: " + cell.categoryName + ".");
+                  continue;
+                }
+
+                const key = row.month + "|" + category.id;
+                const existing = state.refs.budgetLineByKey.get(key);
+                if (existing) {
+                  const oldVal = Number(existing.budgeted || 0);
+                  if (Math.abs(oldVal - cell.amount) < 1e-9) {
+                    unchanged += 1;
+                    continue;
+                  }
+                  const updated = await updateRecord("budget_lines", existing.id, { budgeted: cell.amount });
+                  state.refs.budgetLineByKey.set(key, updated || Object.assign({}, existing, { budgeted: cell.amount }));
+                  updatedLines += 1;
+                  continue;
+                }
+
+                const created = await createRecord("budget_lines", {
+                  month: row.month,
+                  category: category.id,
+                  budgeted: cell.amount
+                });
+                state.refs.budgetLineByKey.set(key, created);
+                createdLines += 1;
+              } catch (cellErr) {
+                failed += 1;
+                pushLog("bad", "Line " + row.lineNo + " month=" + row.month + " category='" + cell.categoryName + "' failed: " + (cellErr && cellErr.message ? cellErr.message : String(cellErr)));
+              }
+            }
+          }
+
+          const elapsedSec = ((Date.now() - started) / 1000).toFixed(1);
+          const summary = [
+            "Import complete in " + elapsedSec + "s.",
+            "Created: " + createdLines,
+            "Updated: " + updatedLines,
+            "Unchanged: " + unchanged,
+            "Skipped unknown category: " + skippedUnknownCategory,
+            "Failed: " + failed
+          ].join(" ");
+
+          $("#importStats").textContent = summary;
+          if (failed === 0) setStatus("ok", summary);
+          else setStatus("warn", summary);
+        } catch (err) {
+          const cls = classifyError(err);
+          setStatus(cls.kind, cls.message);
+          $("#importStats").textContent = "Import aborted: " + (err && err.message ? err.message : String(err));
+          pushLog("bad", "Import aborted: " + (err && err.message ? err.message : String(err)));
+        } finally {
+          state.importing = false;
+          setBusy();
+        }
+      }
+
+      async function parseCurrentFile() {
+        if (!state.file) {
+          setStatus("warn", "Choose a CSV file first.");
+          return;
+        }
+
+        const text = await state.file.text();
+        const parsed = parseBudgetCsv(text);
+        state.parsed = parsed;
+        renderPreview();
+        setBusy();
+
+        for (const warning of parsed.warnings) {
+          pushLog("warn", warning);
+        }
+
+        if (parsed.invalidRows.length) {
+          const first = parsed.invalidRows[0];
+          pushLog("warn", "First parse issue at line " + first.lineNo + ": " + first.reason + ".");
+          setStatus("warn", "CSV parsed with " + parsed.invalidRows.length + " parse issues. Import will skip invalid cells/rows.");
+        } else {
+          setStatus("ok", "CSV parsed. Ready to import " + parsed.numericCellCount + " numeric budget cells.");
+        }
+      }
+
+      function setFile(file) {
+        state.file = file || null;
+        state.parsed = null;
+        $("#fileInfo").textContent = file ? (file.name + " (" + file.size + " bytes)") : "No file loaded.";
+        $("#previewBody").innerHTML = "";
+        $("#previewSummary").textContent = "No parsed rows.";
+        $("#previewPill").textContent = "No parsed rows";
+        $("#importStats").textContent = "No import run yet.";
+        clearLog();
+        setBusy();
+      }
+
+      function handleDropFiles(files) {
+        if (!files || !files.length) return;
+        setFile(files[0]);
+      }
+
+      $("#btnLogin").addEventListener("click", async () => {
+        const base = $("#pbUrl").value.trim().replace(/\/+$/, "");
+        const email = $("#pbEmail").value.trim();
+        const password = $("#pbPass").value;
+
+        if (!base) {
+          setStatus("bad", "Login failed: enter URL.");
+          return;
+        }
+        if (!email || !password) {
+          setStatus("bad", "Login failed: enter email and password.");
+          return;
+        }
+
+        store.set("pbUrl", base);
+        store.set("pbEmail", email);
+
+        try {
+          $("#btnLogin").disabled = true;
+          SESSION.base = base;
+          SESSION.token = "";
+
+          const res = await authWithPassword(email, password);
+          if (!res || !res.token) throw new Error("No token returned by PocketBase.");
+
+          SESSION.token = res.token;
+          store.set("pbToken", res.token);
+          $("#pbPass").value = "";
+
+          setAuthenticatedUI(true);
+          setStatus("ok", "Authenticated. Parse a budget CSV to begin.");
+          setBusy();
+        } catch (err) {
+          SESSION.token = "";
+          store.del("pbToken");
+          const cls = classifyError(err);
+          setStatus(cls.kind, cls.message + " " + (err && err.message ? err.message : ""));
+          setAuthenticatedUI(false);
+          setBusy();
+        } finally {
+          $("#btnLogin").disabled = false;
+        }
+      });
+
+      $("#logoutLink").addEventListener("click", (ev) => {
+        ev.preventDefault();
+        SESSION.base = "";
+        SESSION.token = "";
+        store.del("pbUrl");
+        store.del("pbEmail");
+        store.del("pbToken");
+        $("#pbPass").value = "";
+        setFile(null);
+        setAuthenticatedUI(false);
+        setStatus("", "Logged out.");
+        setBusy();
+      });
+
+      $("#btnPreview").addEventListener("click", async () => {
+        try {
+          await parseCurrentFile();
+        } catch (err) {
+          setBusy();
+          setStatus("bad", "Parse failed: " + (err && err.message ? err.message : String(err)));
+        }
+      });
+
+      $("#btnImport").addEventListener("click", async () => {
+        await importParsedBudget();
+      });
+
+      $("#btnClearFile").addEventListener("click", () => {
+        $("#csvFile").value = "";
+        setFile(null);
+      });
+
+      $("#csvFile").addEventListener("change", (e) => {
+        const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+        setFile(f);
+        if (f && SESSION.token) {
+          parseCurrentFile().catch((err) => {
+            setStatus("bad", "Parse failed: " + (err && err.message ? err.message : String(err)));
+          });
+        }
+      });
+
+      const dropzone = $("#dropzone");
+      ["dragenter", "dragover"].forEach((evt) => {
+        dropzone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add("active");
+        });
+      });
+      ["dragleave", "drop"].forEach((evt) => {
+        dropzone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (evt === "drop") {
+            const files = e.dataTransfer ? e.dataTransfer.files : [];
+            handleDropFiles(files);
+            if (files && files.length && SESSION.token) {
+              parseCurrentFile().catch((err) => {
+                setStatus("bad", "Parse failed: " + (err && err.message ? err.message : String(err)));
+              });
+            }
+          }
+          dropzone.classList.remove("active");
+        });
+      });
+
+      async function bootstrap() {
+        const savedUrl = store.get("pbUrl", "").replace(/\/+$/, "");
+        const savedEmail = store.get("pbEmail", "");
+        const savedToken = store.get("pbToken", "");
+
+        $("#pbUrl").value = savedUrl;
+        $("#pbEmail").value = savedEmail;
+
+        SESSION.base = savedUrl;
+        SESSION.token = savedToken;
+
+        if (SESSION.base && SESSION.token) {
+          try {
+            const res = await authRefresh();
+            if (res && res.token) {
+              SESSION.token = res.token;
+              store.set("pbToken", res.token);
+            }
+            setAuthenticatedUI(true);
+            setStatus("ok", "Session restored via auth-refresh.");
+          } catch {
+            SESSION.token = "";
+            store.del("pbToken");
+            setAuthenticatedUI(false);
+            setStatus("warn", "Saved session expired. Please log in.");
+          }
+        } else {
+          setAuthenticatedUI(false);
+          setStatus("", "Not authenticated.");
+        }
+
+        setBusy();
+      }
+
+      bootstrap().catch((err) => {
+        setAuthenticatedUI(false);
+        setBusy();
+        setStatus("bad", "Startup failed: " + (err && err.message ? err.message : String(err)));
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -316,7 +316,6 @@
         year: now.getFullYear(),
         selectedMonth: now.getMonth() + 1,
         categories: [],
-        accounts: [],
         budgetByCategoryMonth: new Map(),
         budgetLineRecordByKey: new Map(),
         activityByCategoryMonth: new Map(),
@@ -324,6 +323,7 @@
         incomeRows: [],
         expenseRows: [],
         editableRows: [],
+        loadNotice: "",
         editing: null
       };
 
@@ -342,12 +342,6 @@
           minimumFractionDigits: 2,
           maximumFractionDigits: 2
         });
-      }
-
-      function formatDateNoonUtc(y, m, d) {
-        const mm = String(m).padStart(2, "0");
-        const dd = String(d).padStart(2, "0");
-        return y + "-" + mm + "-" + dd + "T12:00:00Z";
       }
 
       function monthKey(y, m) {
@@ -680,15 +674,6 @@
         state.editing = null;
       }
 
-      function beginEditByRowIndex(rowIndex) {
-        if (rowIndex < 0 || rowIndex >= state.editableRows.length) {
-          stopEditing();
-          return;
-        }
-        const row = state.editableRows[rowIndex];
-        beginEditCell(String(row.id), rowIndex);
-      }
-
       function beginEditCell(categoryId, rowIndex) {
         if (state.loading) return;
         if (state.editing) return;
@@ -856,7 +841,6 @@
 
       function resetModuleData() {
         state.categories = [];
-        state.accounts = [];
         state.budgetByCategoryMonth = new Map();
         state.budgetLineRecordByKey = new Map();
         state.activityByCategoryMonth = new Map();
@@ -864,6 +848,7 @@
         state.incomeRows = [];
         state.expenseRows = [];
         state.editableRows = [];
+        state.loadNotice = "";
         state.editing = null;
         $("#incomeHead").innerHTML = "";
         $("#incomeBody").innerHTML = "";
@@ -874,19 +859,12 @@
 
       async function loadBudgetData() {
         const year = state.year;
-        const startOfYear = formatDateNoonUtc(year, 1, 1);
-        const endOfYear = formatDateNoonUtc(year, 12, 31);
         const janKey = monthKey(year, 1);
         const decKey = monthKey(year, 12);
 
-        const [categories, accounts, budgetLines, entries] = await Promise.all([
+        const [categories, budgetLines, activityRows] = await Promise.all([
           listRecordsSafe("categories", {
             filter: '(kind = "income" || kind = "expense") && is_archived = false',
-            sort: "name",
-            perPage: 500
-          }),
-          listRecordsSafe("accounts", {
-            filter: "is_archived = false",
             sort: "name",
             perPage: 500
           }),
@@ -895,22 +873,26 @@
             sort: "month",
             perPage: 500
           }),
-          listRecordsSafe("entries", {
-            filter: 'status = "cleared" && date <= "' + endOfYear + '"',
-            sort: "date",
+          listRecordsSafe("v_activity_by_category_month", {
+            filter: 'month <= "' + decKey + '"',
+            sort: "month",
             perPage: 500
           })
         ]);
 
         const categoriesById = new Map(categories.map((c) => [String(c.id), c]));
-        const nonVirtualAccountIds = new Set(
-          accounts.filter((a) => String(a.type || "") !== "virtual").map((a) => String(a.id))
-        );
+        const categoryIdByName = new Map();
+        const duplicateCategoryNames = new Set();
+        for (const c of categories) {
+          const name = String(c.name || "");
+          if (!name) continue;
+          if (categoryIdByName.has(name)) duplicateCategoryNames.add(name);
+          else categoryIdByName.set(name, String(c.id));
+        }
 
         state.categories = categories
           .filter((c) => (String(c.kind || "") === "expense" || String(c.kind || "") === "income") && c.is_archived !== true)
           .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-        state.accounts = accounts;
 
         const budgetByMonth = new Map();
         const budgetLineRecordByKey = new Map();
@@ -932,25 +914,19 @@
         }
 
         const activityByMonth = new Map();
-        for (const entry of entries) {
-          const catId = String(entry.category || "");
+        for (const row of activityRows) {
+          const categoryName = String(row.category || "");
+          if (!categoryName || duplicateCategoryNames.has(categoryName)) continue;
+          const catId = categoryIdByName.get(categoryName);
           if (!catId || !categoriesById.has(catId)) continue;
-          const cat = categoriesById.get(catId);
-          if (!cat) continue;
-          const kind = String(cat.kind || "");
-          if (kind !== "expense" && kind !== "income") continue;
-          const accountId = String(entry.account || "");
-          if (!nonVirtualAccountIds.has(accountId)) continue;
-          const dateStr = String(entry.date || "");
-          if (!dateStr) continue;
-          const month = dateStr.slice(0, 7);
+          const month = String(row.month || "");
           if (!/^\d{4}-\d{2}$/.test(month)) continue;
-          const qty = Number(entry.qty || 0);
+          const qty = Number(row.activity || 0);
           if (!Number.isFinite(qty)) continue;
-          if (dateStr < startOfYear) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
+          if (month < janKey) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
           if (month >= janKey && month <= decKey) {
             const key = catId + "|" + month;
-            activityByMonth.set(key, Number(activityByMonth.get(key) || 0) + qty);
+            activityByMonth.set(key, qty);
           }
         }
 
@@ -958,6 +934,10 @@
         state.budgetLineRecordByKey = budgetLineRecordByKey;
         state.activityByCategoryMonth = activityByMonth;
         state.openingByCategory = openingByCategory;
+        state.loadNotice = "";
+        if (duplicateCategoryNames.size > 0) {
+          state.loadNotice = "Some activity rows were skipped because category names are not unique.";
+        }
       }
 
       async function refreshAll() {
@@ -968,7 +948,8 @@
           await loadBudgetData();
           buildGridRows();
           renderTable();
-          setStatus("ok", "Loaded budget grid for " + state.year + ".");
+          if (state.loadNotice) setStatus("warn", state.loadNotice);
+          else setStatus("ok", "Loaded budget grid for " + state.year + ".");
         } catch (err) {
           const info = classifyError(err);
           setStatus(info.kind, "Load failed: " + (err && err.message ? err.message : info.message));

@@ -131,6 +131,21 @@ Notes:
 - There is no separate budget-period table.
 - Carryover is derived from history and not persisted.
 
+### 2.7 `v_activity_by_category_month` (view)
+
+Server-side monthly activity aggregation by category name.
+
+Required fields:
+- `id` (text, unique per category/month)
+- `category` (text; category name from `categories.name`)
+- `month` (text, format `YYYY-MM`)
+- `activity` (number; summed `entries.qty`)
+
+Reference view query:
+- Uses `entries` joined to `categories`
+- Includes `category.kind in {income, expense}`
+- Groups by `strftime('%Y-%m', e.date), c.name`
+
 ## 3. Data Semantics (Required)
 
 ### 3.1 Normal budget transaction
@@ -164,7 +179,7 @@ Notes:
 
 Budget modules must:
 - include only `category.kind in {income, expense}`
-- exclude `accounts.type = virtual`
+- consume monthly activity from `v_activity_by_category_month` for activity calculations
 
 ## 4. Starting Balances
 
@@ -177,15 +192,10 @@ Budget modules must:
 
 For month `M` and category `C`:
 
-- `Income(M)` = sum of `entries.qty` where:
-  - `category.kind = income`
-  - `status = cleared`
-  - `accounts.type != virtual`
-
-- `Activity(M, C)` = sum of `entries.qty` where:
-  - `category = C`
-  - `category.kind = expense`
-  - `status = cleared`
+- `Activity(M, C)` = `v_activity_by_category_month.activity` where:
+  - `month = M`
+  - `category = C.name`
+  - default to `0` if no row exists
 
 - `Available(M, C)` = `Available(M-1, C) + budgeted(M, C) + Activity(M, C)`
 
