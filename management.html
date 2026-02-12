@@ -253,6 +253,18 @@
               <label for="q">Search</label>
               <input id="q" type="text" placeholder="name, symbol, institution..." />
             </div>
+            <div class="field" id="payeeCardCategoryFilterWrap" style="display:none;">
+              <label for="payeeCardCategoryFilter">Card Category</label>
+              <select id="payeeCardCategoryFilter">
+                <option value="">(all)</option>
+              </select>
+            </div>
+            <div class="field" id="payeeCategoryFilterWrap" style="display:none;">
+              <label for="payeeCategoryFilter">Category</label>
+              <select id="payeeCategoryFilter">
+                <option value="">(all)</option>
+              </select>
+            </div>
             <label class="toggle" title="Show archived records too (where applicable)">
               <input id="showArchived" type="checkbox" />
               Show archived
@@ -588,6 +600,7 @@
   let assetEntryCounts = new Map();
   let categoryEntryCounts = new Map();
   let payeeTxnCounts = new Map();
+  let payeeIdsByCategory = new Map();
   let editing = { mode:"new", id:null, data:null };
   const tableSort = {
     accounts: { key: "name", direction: "asc" },
@@ -682,13 +695,24 @@
     const assetMap = new Map();
     const categoryMap = new Map();
     const payeeMap = new Map();
+    const payeeIdsByCategoryMap = new Map();
     const [entries, assets, txns] = await Promise.all([listAllEntriesForStats(), listAllAssetsForStats(), listAllTxnsForStats()]);
     const precisionByAssetId = new Map(assets.map(a => [String(a?.id || ""), normalizePrecision(a?.precision)]));
+    const payeeByTxnId = new Map();
+
+    txns.forEach((t) => {
+      const txnId = String(t?.id || "");
+      const payeeId = String(t?.payee || "");
+      if(txnId && payeeId) payeeByTxnId.set(txnId, payeeId);
+      if(!payeeId) return;
+      payeeMap.set(payeeId, (payeeMap.get(payeeId) || 0) + 1);
+    });
 
     entries.forEach(e => {
       const accountId = e?.account;
       const assetId = e?.asset;
       const categoryId = e?.category;
+      const txnId = String(e?.txn || "");
       if(accountId){
         const qtyMinor = Number(e?.qty || 0);
         if(Number.isFinite(qtyMinor) && Number.isSafeInteger(qtyMinor)){
@@ -712,15 +736,19 @@
       if(categoryId){
         categoryMap.set(categoryId, (categoryMap.get(categoryId) || 0) + 1);
       }
+      const catId = String(categoryId || "");
+      const payeeId = payeeByTxnId.get(txnId) || "";
+      if(catId && payeeId){
+        let payees = payeeIdsByCategoryMap.get(catId);
+        if(!payees){
+          payees = new Set();
+          payeeIdsByCategoryMap.set(catId, payees);
+        }
+        payees.add(payeeId);
+      }
     });
 
-    txns.forEach((t) => {
-      const payeeId = String(t?.payee || "");
-      if(!payeeId) return;
-      payeeMap.set(payeeId, (payeeMap.get(payeeId) || 0) + 1);
-    });
-
-    return { accountMap, assetMap, categoryMap, payeeMap };
+    return { accountMap, assetMap, categoryMap, payeeMap, payeeIdsByCategoryMap };
   }
 
   function entriesCountForRecord(tab, record){
@@ -1005,6 +1033,83 @@
     $("#btnNextPage").disabled = page >= totalPages;
   }
 
+  function updatePayeeFilterVisibility(){
+    const isPayees = activeTab === "payees";
+    $("#payeeCardCategoryFilterWrap").style.display = isPayees ? "" : "none";
+    $("#payeeCategoryFilterWrap").style.display = isPayees ? "" : "none";
+  }
+
+  function refillPayeeFilterOptions(){
+    const cardSelect = $("#payeeCardCategoryFilter");
+    const categorySelect = $("#payeeCategoryFilter");
+    if(!cardSelect || !categorySelect) return;
+
+    const selectedCard = String(cardSelect.value || "");
+    const selectedCategory = String(categorySelect.value || "");
+
+    const payeeCardField = (SCHEMA.payees.fields || []).find((f) => f.key === "card_category");
+    const cardOptions = Array.isArray(payeeCardField?.options) ? payeeCardField.options.slice() : [];
+    const noneValue = "__none__";
+    cardSelect.innerHTML = '<option value="">(all)</option><option value="' + noneValue + '">(none)</option>' + cardOptions.map((opt) => {
+      const v = String(opt || "");
+      return `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`;
+    }).join("");
+    cardSelect.value = (selectedCard === noneValue || cardOptions.includes(selectedCard)) ? selectedCard : "";
+
+    const categories = Array.from(categoriesIndex.values())
+      .slice()
+      .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity:"base", numeric:true }));
+    categorySelect.innerHTML = '<option value="">(all)</option>' + categories.map((cat) => {
+      const id = String(cat?.id || "");
+      const name = String(cat?.name || id || "");
+      const label = cat?.is_archived ? `${name} [archived]` : name;
+      return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
+    }).join("");
+    categorySelect.value = categories.some((c) => String(c?.id || "") === selectedCategory) ? selectedCategory : "";
+  }
+
+  async function listAllRecords(collection, { q="", showArchived=false, onlyArchived=false, perPage=500, sort="" }={}){
+    let page = 1;
+    let all = [];
+    while(true){
+      const data = await listRecords(collection, { q, showArchived, onlyArchived, page, perPage, sort });
+      all = all.concat(data.items || []);
+      if(page >= data.totalPages) break;
+      page += 1;
+    }
+    return all;
+  }
+
+  async function listFilteredPayees({ q="", showArchived=false, onlyArchived=false, page=1, perPage=50, sort="", cardCategory="", categoryId="" }={}){
+    const allPayees = await listAllRecords("payees", { q, showArchived, onlyArchived, perPage:500, sort });
+    let filtered = allPayees.slice();
+    if(cardCategory){
+      if(cardCategory === "__none__"){
+        filtered = filtered.filter((p) => !String(p?.card_category || "").trim());
+      }else{
+        filtered = filtered.filter((p) => String(p?.card_category || "") === cardCategory);
+      }
+    }
+    if(categoryId){
+      const allowed = payeeIdsByCategory.get(String(categoryId || "")) || new Set();
+      filtered = filtered.filter((p) => allowed.has(String(p?.id || "")));
+    }
+
+    const safePerPage = Math.max(1, perPage);
+    const totalItems = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / safePerPage));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * safePerPage;
+    const end = start + safePerPage;
+    return {
+      items: filtered.slice(start, end),
+      page: safePage,
+      perPage: safePerPage,
+      totalPages,
+      totalItems
+    };
+  }
+
   function rowSortValue(row, column){
     if(column.render === "parentName"){
       const parentId = row.parent || "";
@@ -1079,6 +1184,9 @@
     $("#q").value = "";
     $("#showArchived").checked = false;
     $("#onlyArchived").checked = false;
+    $("#payeeCardCategoryFilter").value = "";
+    $("#payeeCategoryFilter").value = "";
+    updatePayeeFilterVisibility();
     selectedSetForTab(activeTab).clear();
     renderBulkActions();
     refresh();
@@ -1383,13 +1491,17 @@
       assetEntryCounts = new Map();
       categoryEntryCounts = new Map();
       payeeTxnCounts = new Map();
+      payeeIdsByCategory = new Map();
 
       const catsAllRes = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false, page:1, perPage:500 });
       categoriesIndex = new Map((catsAllRes.items || []).map(c => [c.id, c]));
+      refillPayeeFilterOptions();
 
       const q = $("#q").value;
       const showArchived = $("#showArchived").checked;
       const onlyArchived = $("#onlyArchived").checked;
+      const payeeCardCategory = activeTab === "payees" ? String($("#payeeCardCategoryFilter").value || "") : "";
+      const payeeCategoryId = activeTab === "payees" ? String($("#payeeCategoryFilter").value || "") : "";
       if(onlyArchived) $("#showArchived").checked = true;
 
       const stats = await computeEntryStats();
@@ -1397,18 +1509,22 @@
       assetEntryCounts = stats.assetMap;
       categoryEntryCounts = stats.categoryMap;
       payeeTxnCounts = stats.payeeMap;
+      payeeIdsByCategory = stats.payeeIdsByCategoryMap || new Map();
 
       const paging = tablePagingStateForTab(activeTab);
-      let listRes = await listRecords(activeTab, {
-        q,
-        showArchived,
-        onlyArchived,
-        page: paging.page,
-        perPage: paging.perPage,
-        sort: serverSortExprForActiveTab()
-      });
-      if(paging.page > listRes.totalPages){
-        paging.page = listRes.totalPages;
+      let listRes;
+      if(activeTab === "payees" && (payeeCardCategory || payeeCategoryId)){
+        listRes = await listFilteredPayees({
+          q,
+          showArchived,
+          onlyArchived,
+          page: paging.page,
+          perPage: paging.perPage,
+          sort: serverSortExprForActiveTab(),
+          cardCategory: payeeCardCategory,
+          categoryId: payeeCategoryId
+        });
+      }else{
         listRes = await listRecords(activeTab, {
           q,
           showArchived,
@@ -1417,7 +1533,19 @@
           perPage: paging.perPage,
           sort: serverSortExprForActiveTab()
         });
+        if(paging.page > listRes.totalPages){
+          paging.page = listRes.totalPages;
+          listRes = await listRecords(activeTab, {
+            q,
+            showArchived,
+            onlyArchived,
+            page: paging.page,
+            perPage: paging.perPage,
+            sort: serverSortExprForActiveTab()
+          });
+        }
       }
+      paging.page = listRes.page;
       paging.totalPages = listRes.totalPages;
       paging.totalItems = listRes.totalItems;
       records = listRes.items || [];
@@ -1460,6 +1588,14 @@
   });
   $("#onlyArchived").addEventListener("change", () => {
     if($("#onlyArchived").checked) $("#showArchived").checked = true;
+    tablePagingStateForTab(activeTab).page = 1;
+    refresh();
+  });
+  $("#payeeCardCategoryFilter").addEventListener("change", () => {
+    tablePagingStateForTab(activeTab).page = 1;
+    refresh();
+  });
+  $("#payeeCategoryFilter").addEventListener("change", () => {
     tablePagingStateForTab(activeTab).page = 1;
     refresh();
   });
@@ -1561,6 +1697,9 @@
     tablePagingStateForTab(activeTab).page = 1;
     tablePagingStateForTab(activeTab).totalPages = 1;
     tablePagingStateForTab(activeTab).totalItems = 0;
+    $("#payeeCardCategoryFilter").value = "";
+    $("#payeeCategoryFilter").value = "";
+    updatePayeeFilterVisibility();
     renderTable();
     renderBulkActions();
     updatePagerUI();
@@ -1615,6 +1754,7 @@
   // Prefill from localStorage
   $("#pbUrl").value = store.get("pbUrl", "");
   $("#pbEmail").value = store.get("pbEmail", "");
+  updatePayeeFilterVisibility();
   updatePagerUI();
   syncStickyOffsets();
   window.addEventListener("resize", syncStickyOffsets);
