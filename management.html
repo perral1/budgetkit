@@ -515,6 +515,12 @@
     });
   }
 
+  async function getRecord(collection, id){
+    return pbFetch(`/api/collections/${encodeURIComponent(collection)}/records/${encodeURIComponent(id)}`, {
+      method:"GET"
+    });
+  }
+
   const SCHEMA = {
     accounts: {
       label: "Accounts",
@@ -1024,6 +1030,19 @@
     let deleted = 0;
     let deleteFailed = 0;
     let firstError = "";
+    let adoptedCategory = "";
+
+    const targetCategory = String(target?.card_category || "").trim();
+    if(!targetCategory){
+      const firstSourceCategory = sources
+        .map((p) => String(p?.card_category || "").trim())
+        .find((v) => !!v);
+      if(firstSourceCategory){
+        await updateRecord("payees", target.id, { card_category: firstSourceCategory });
+        target.card_category = firstSourceCategory;
+        adoptedCategory = firstSourceCategory;
+      }
+    }
 
     const allTxns = await listAllTxnsForStats();
     const txnsToMove = allTxns.filter(t => sourceIds.has(String(t?.payee || "")));
@@ -1052,12 +1071,22 @@
       toast(
         "bad",
         "Merge completed with errors",
-        `Moved ${moved} txn(s), failed ${moveFailed}. Deleted ${deleted} payee(s), failed ${deleteFailed}.` + (firstError ? ` First error: ${firstError}` : "")
+        `Moved ${moved} txn(s), failed ${moveFailed}. Deleted ${deleted} payee(s), failed ${deleteFailed}.` + (adoptedCategory ? ` Card category set to ${adoptedCategory}.` : "") + (firstError ? ` First error: ${firstError}` : "")
       );
     }else{
-      toast("ok", "Merge complete", `Moved ${moved} txn(s) to "${targetLabel}" and deleted ${deleted} payee(s).`);
+      toast("ok", "Merge complete", `Moved ${moved} txn(s) to "${targetLabel}" and deleted ${deleted} payee(s).` + (adoptedCategory ? ` Card category set to ${adoptedCategory}.` : ""));
     }
-    refresh();
+    await refresh();
+
+    let mergedPayee = records.find((r) => String(r?.id || "") === String(target.id || ""));
+    if(!mergedPayee){
+      try{
+        mergedPayee = await getRecord("payees", target.id);
+      }catch{}
+    }
+    if(mergedPayee){
+      openEditor("edit", mergedPayee);
+    }
   }
 
   async function cleanupPayees(){
