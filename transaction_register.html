@@ -965,11 +965,16 @@
         const optionHtml = options.map((opt) => {
           const display = opt.label || "(none)";
           const lower = display.toLocaleLowerCase();
-          return '<button type="button" class="inlineLookupOption" data-lookup-value="' + escapeHtml(opt.value) + '" data-lookup-label="' + escapeHtml(lower) + '">' + escapeHtml(display) + "</button>";
+          return '<button type="button" class="inlineLookupOption" data-lookup-static="1" data-lookup-value="' + escapeHtml(opt.value) + '" data-lookup-label="' + escapeHtml(lower) + '">' + escapeHtml(display) + "</button>";
         }).join("");
+        const collection = dataEditKey === "entry-account"
+          ? "accounts"
+          : (dataEditKey === "entry-category"
+            ? "categories"
+            : (dataEditKey === "txn-payee" ? "payees" : ""));
 
         return [
-          '<div class="inlineLookup" data-lookup-root="1">',
+          '<div class="inlineLookup" data-lookup-root="1" data-lookup-collection="' + escapeHtml(collection) + '">',
           '<input class="inlineInput" type="text" data-lookup-input="1" data-lookup-for="' + escapeHtml(dataEditKey) + '" value="' + escapeHtml(selectedLabel) + '" placeholder="' + escapeHtml(placeholder || "") + '" autocomplete="off" />',
           '<input type="hidden" data-edit="' + escapeHtml(dataEditKey) + '" value="' + escapeHtml(normalizedSelectedId) + '" />',
           '<div class="inlineLookupMenu" data-lookup-menu="1">',
@@ -990,6 +995,21 @@
 
       function normalizeLookupText(raw) {
         return String(raw == null ? "" : raw).trim().toLocaleLowerCase();
+      }
+
+      function encodeLookupCreateToken(collection, name) {
+        return "__create__|" + String(collection || "") + "|" + encodeURIComponent(String(name || ""));
+      }
+
+      function parseLookupCreateToken(value) {
+        const raw = String(value || "");
+        if (!raw.startsWith("__create__|")) return null;
+        const parts = raw.split("|");
+        if (parts.length < 3) return null;
+        return {
+          collection: parts[1] || "",
+          name: decodeURIComponent(parts.slice(2).join("|") || "")
+        };
       }
 
       function fuzzyLookupScore(label, query) {
@@ -1067,7 +1087,7 @@
           hidden.value = "";
           return;
         }
-        const exact = $$(".inlineLookupOption", lookup).find((btn) => (btn.getAttribute("data-lookup-label") || "") === raw);
+        const exact = $$(".inlineLookupOption[data-lookup-static=\"1\"]", lookup).find((btn) => (btn.getAttribute("data-lookup-label") || "") === raw);
         hidden.value = exact ? (exact.getAttribute("data-lookup-value") || "") : "";
       }
 
@@ -1078,8 +1098,12 @@
         const menu = $('[data-lookup-menu="1"]', lookup);
         if (!menu) return;
         const term = String(queryOverride == null ? textInput.value : queryOverride);
+        const termNorm = normalizeLookupText(term);
+        const collection = lookup.getAttribute("data-lookup-collection") || "";
+        const existingCreate = $(".inlineLookupOption[data-lookup-create=\"1\"]", lookup);
+        if (existingCreate) existingCreate.remove();
         const ranked = [];
-        $$(".inlineLookupOption", lookup).forEach((btn) => {
+        $$(".inlineLookupOption[data-lookup-static=\"1\"]", lookup).forEach((btn) => {
           const label = btn.getAttribute("data-lookup-label") || "";
           const score = fuzzyLookupScore(label, term);
           if (score < 0) {
@@ -1093,13 +1117,35 @@
           if (b.score !== a.score) return b.score - a.score;
           return a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true });
         });
-        ranked.forEach((item, idx) => {
+        const wantCreate = !!termNorm && !!collection;
+        const maxMatches = Math.max(0, 50 - (wantCreate ? 1 : 0));
+        const limited = ranked.slice(0, maxMatches);
+        limited.forEach((item, idx) => {
           item.btn.style.display = "block";
           item.btn.classList.toggle("active", idx === 0);
           menu.appendChild(item.btn);
         });
+        if (ranked.length > maxMatches) {
+          ranked.slice(maxMatches).forEach((item) => {
+            item.btn.style.display = "none";
+            item.btn.classList.remove("active");
+          });
+        }
+        if (wantCreate) {
+          const createBtn = document.createElement("button");
+          createBtn.type = "button";
+          createBtn.className = "inlineLookupOption";
+          createBtn.setAttribute("data-lookup-create", "1");
+          createBtn.setAttribute("data-lookup-create-name", term);
+          createBtn.setAttribute("data-lookup-value", encodeLookupCreateToken(collection, term));
+          createBtn.setAttribute("data-lookup-label", normalizeLookupText(term));
+          createBtn.textContent = '+ Add "' + term + '"';
+          if (!limited.length) createBtn.classList.add("active");
+          menu.appendChild(createBtn);
+        }
         const empty = $(".inlineLookupEmpty", lookup);
-        if (empty) empty.style.display = ranked.length ? "none" : "block";
+        const visibleCount = limited.length + (wantCreate ? 1 : 0);
+        if (empty) empty.style.display = visibleCount ? "none" : "block";
       }
 
       function applyInlineLookupPhantomFill(lookup, rawTyped) {
@@ -1109,6 +1155,7 @@
         const top = firstVisibleLookupOption(lookup);
         const typed = String(rawTyped == null ? "" : rawTyped);
         if (!top || !typed) return;
+        if (top.getAttribute("data-lookup-create") === "1") return;
         const candidate = top.textContent === "(none)" ? "" : String(top.textContent || "");
         if (!candidate) return;
         if (!normalizeLookupText(candidate).startsWith(normalizeLookupText(typed))) return;
@@ -1121,6 +1168,11 @@
         const textInput = $('[data-lookup-input="1"]', lookup);
         if (!textInput) return;
         const typed = String(rawTyped == null ? "" : rawTyped);
+        if (optionBtn.getAttribute("data-lookup-create") === "1") {
+          textInput.value = typed;
+          try { textInput.setSelectionRange(typed.length, typed.length); } catch {}
+          return;
+        }
         const candidate = optionBtn.textContent === "(none)" ? "" : String(optionBtn.textContent || "");
         if (!candidate) {
           textInput.value = "";
@@ -1142,7 +1194,9 @@
         const hidden = $('input[type="hidden"][data-edit]', lookup);
         if (!textInput || !hidden) return;
         const value = optionBtn.getAttribute("data-lookup-value") || "";
-        const display = optionBtn.textContent === "(none)" ? "" : optionBtn.textContent;
+        const display = optionBtn.getAttribute("data-lookup-create") === "1"
+          ? (optionBtn.getAttribute("data-lookup-create-name") || "")
+          : (optionBtn.textContent === "(none)" ? "" : optionBtn.textContent);
         hidden.value = value;
         textInput.value = display;
         lookup.setAttribute("data-lookup-typed", display);
@@ -1165,6 +1219,43 @@
         lookup.classList.remove("open");
         lookup.removeAttribute("data-lookup-nav-ready");
         try { textInput.focus({ preventScroll: true }); } catch { textInput.focus(); }
+      }
+
+      async function resolveLookupValue(value, createdLookupByToken) {
+        const raw = String(value || "").trim();
+        if (!raw) return "";
+        const token = parseLookupCreateToken(raw);
+        if (!token) return raw;
+        const key = raw;
+        if (createdLookupByToken.has(key)) return createdLookupByToken.get(key);
+
+        const collection = token.collection;
+        const name = String(token.name || "").trim();
+        if (!collection || !name) throw new Error("New lookup value is missing collection/name.");
+
+        if (collection === "payees") {
+          const existing = state.payees.find((p) => normalizeLookupText(p && p.name) === normalizeLookupText(name));
+          if (existing && existing.id) {
+            const existingId = String(existing.id);
+            createdLookupByToken.set(key, existingId);
+            return existingId;
+          }
+        }
+
+        const body = collection === "accounts"
+          ? { name: name, type: "bank", is_archived: false }
+          : (collection === "categories"
+            ? { name: name, kind: "expense", is_archived: false }
+            : (collection === "payees"
+              ? { name: name, is_archived: false }
+              : null));
+        if (!body) throw new Error("Unsupported create-lookup collection: " + collection);
+
+        const created = await createRecord(collection, body);
+        const id = String((created && created.id) || "");
+        if (!id) throw new Error("Failed to create new " + collection + " entry for \"" + name + "\".");
+        createdLookupByToken.set(key, id);
+        return id;
       }
 
       function sortedCopyByLabel(items, labelFn) {
@@ -1454,6 +1545,7 @@
         let payee = null;
         let memo = null;
         const updates = [];
+        const createdLookupByToken = new Map();
 
         try {
           const dateRaw = $('input[data-edit="txn-date"]', root).value.trim();
@@ -1461,16 +1553,19 @@
           memo = fieldOrNull($('input[data-edit="txn-memo"]', root).value);
           if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) throw new Error("Date must be in YYYY-MM-DD format.");
           normalizedDate = normalizeDateToNoonUtc(dateRaw);
+          payee = payee ? await resolveLookupValue(payee, createdLookupByToken) : null;
 
           const entryRows = $$('tr[data-edit-entry="1"]', $("#registerBody"));
           for (const row of entryRows) {
             const entryId = row.getAttribute("data-entry-id") || "";
-            const account = $('input[data-edit="entry-account"]', row).value;
-            const category = $('input[data-edit="entry-category"]', row).value;
+            const accountRaw = $('input[data-edit="entry-account"]', row).value;
+            const categoryRaw = $('input[data-edit="entry-category"]', row).value;
             const qtyRaw = $('input[data-edit="entry-qty"]', row).value.trim();
             const status = $('select[data-edit="entry-status"]', row).value;
 
             if (!entryId) throw new Error("Entry id missing in edit row.");
+            const account = await resolveLookupValue(accountRaw, createdLookupByToken);
+            const categoryResolved = categoryRaw ? await resolveLookupValue(categoryRaw, createdLookupByToken) : "";
             if (!account) throw new Error("Account is required for all entries.");
             if (!status) throw new Error("Status is required for all entries.");
             if (!qtyRaw) throw new Error("Amount is required for all entries.");
@@ -1484,7 +1579,7 @@
             const body = {
               date: normalizedDate,
               account: account,
-              category: category || null,
+              category: categoryResolved || null,
               asset: entryAssetId,
               qty: qty,
               status: status
@@ -1944,6 +2039,7 @@
               lookup.setAttribute("data-lookup-nav-ready", "1");
             }
             const next = moveActiveLookupOption(lookup, e.key === "ArrowDown" ? 1 : -1);
+            if (next) lookup.setAttribute("data-lookup-searching", "1");
             previewInlineLookupOption(lookup, next, typed == null ? t.value : typed);
             return;
           }
@@ -1957,7 +2053,7 @@
             return;
           }
           if (e.key === "Tab") {
-            if (lookup) {
+            if (lookup && isSearching) {
               const top = activeLookupOption(lookup) || firstVisibleLookupOption(lookup);
               if (top) chooseInlineLookupOption(lookup, top);
             }
@@ -1996,9 +2092,9 @@
         lookup.setAttribute("data-lookup-original-text", input.value || "");
         lookup.setAttribute("data-lookup-original-value", hidden ? (hidden.value || "") : "");
         lookup.setAttribute("data-lookup-searching", "0");
-        lookup.setAttribute("data-lookup-typed", input.value || "");
+        lookup.setAttribute("data-lookup-typed", "");
         lookup.removeAttribute("data-lookup-nav-ready");
-        filterInlineLookupMenu(lookup, lookup.getAttribute("data-lookup-typed") || "");
+        filterInlineLookupMenu(lookup, "");
       });
 
       $("#registerBody").addEventListener("input", function(e) {
@@ -2008,7 +2104,7 @@
         if (!lookup) return;
         const rawTyped = input.value;
         lookup.classList.add("open");
-        lookup.setAttribute("data-lookup-searching", "1");
+        lookup.setAttribute("data-lookup-searching", rawTyped.trim() ? "1" : "0");
         lookup.setAttribute("data-lookup-typed", rawTyped);
         lookup.removeAttribute("data-lookup-nav-ready");
         filterInlineLookupMenu(lookup, rawTyped);

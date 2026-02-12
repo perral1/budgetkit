@@ -4,8 +4,8 @@ Repository instructions for people and coding agents working in this project.
 
 ## Repository Structure
 
-- `database_spec.md`: Authoritative PocketBase schema, data semantics, and budgeting rules.
-- `module_best_practices.md`: Auth/session/API/querying/UX conventions for standalone modules.
+- `docs/database_spec.md`: Authoritative PocketBase schema, data semantics, and budgeting rules.
+- `docs/module_best_practices.md`: Auth/session/API/querying/UX conventions for standalone modules.
 
 ## Source of Truth
 
