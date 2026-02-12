@@ -85,3 +85,11 @@ Why:
 - Show exact HTTP status when available.
 - Distinguish auth failures from schema/filter failures and network failures.
 - Avoid generic catch-all errors when a specific class is known.
+
+## 7. Archived Record Handling
+
+- For collections with `is_archived`, do not offer archived records in search/autocomplete options used to create or edit transactions/entries.
+- If an existing record already references an archived account/category/payee, still load and display that linked value in read and edit views.
+- Archived-linked transactions/entries must remain included in all totals and calculations.
+- Where a list module manages archived-capable collections, provide filters for `unarchived`, `archived`, and `both`.
+- For budget views that hide archived categories, hide only line items; keep archived categories in group totals and overall totals.

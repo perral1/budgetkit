@@ -277,6 +277,10 @@
           </div>
           <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
             <button class="btn" id="btnRefresh" type="button">Refresh</button>
+            <label class="small" style="display:flex; align-items:center; gap:6px; margin:0;">
+              <input id="hideArchivedCategories" type="checkbox" checked />
+              Hide archived categories
+            </label>
           </div>
         </div>
         <div class="small" id="summaryLine"></div>
@@ -323,9 +327,12 @@
         openingByCategory: new Map(),
         incomeRows: [],
         expenseRows: [],
+        incomeRowsAll: [],
+        expenseRowsAll: [],
         editableRows: [],
         loadNotice: "",
-        editing: null
+        editing: null,
+        hideArchivedCategories: true
       };
 
       function escapeHtml(v) {
@@ -410,6 +417,7 @@
         $("#btnPrevYear").disabled = disabled;
         $("#btnNextYear").disabled = disabled;
         $("#btnThisYear").disabled = disabled;
+        $("#hideArchivedCategories").disabled = disabled;
         $("#btnLogin").disabled = state.loading;
       }
 
@@ -587,6 +595,7 @@
             id,
             name: String(category.name || ""),
             kind: String(category.kind || ""),
+            isArchived: category.is_archived === true,
             groupName: parsed.groupName,
             categoryName: parsed.categoryName,
             months
@@ -600,9 +609,16 @@
           return a.categoryName.localeCompare(b.categoryName);
         });
 
-        state.incomeRows = rows.filter((r) => r.kind === "income");
-        state.expenseRows = rows.filter((r) => r.kind === "expense");
-        state.editableRows = rows.slice();
+        state.incomeRowsAll = rows.filter((r) => r.kind === "income");
+        state.expenseRowsAll = rows.filter((r) => r.kind === "expense");
+        applyRowVisibility();
+      }
+
+      function applyRowVisibility() {
+        const hideArchived = state.hideArchivedCategories;
+        state.incomeRows = hideArchived ? state.incomeRowsAll.filter((r) => !r.isArchived) : state.incomeRowsAll.slice();
+        state.expenseRows = hideArchived ? state.expenseRowsAll.filter((r) => !r.isArchived) : state.expenseRowsAll.slice();
+        state.editableRows = state.incomeRows.concat(state.expenseRows);
       }
 
       function renderTable() {
@@ -612,7 +628,7 @@
           rowIndexById.set(String(state.editableRows[i].id), i);
         }
 
-        function renderSection(headEl, bodyEl, rows, totalLabel) {
+        function renderSection(headEl, bodyEl, allRows, visibleRows, totalLabel) {
           let top = '<tr><th class="group" rowspan="2">Group</th><th class="category" rowspan="2">Category</th>';
           for (let m = 1; m <= 12; m += 1) {
             if (m === selected) top += '<th colspan="3">' + MONTH_NAMES[m - 1] + "</th>";
@@ -628,11 +644,33 @@
           headEl.innerHTML = top + sub;
 
           const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+          const groupTotalsByName = new Map();
+          const groupOrder = [];
+          const visibleByGroup = new Map();
           const rowsHtml = [];
-          let currentGroup = "";
-          let groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+          for (const row of allRows) {
+            let groupTotals = groupTotalsByName.get(row.groupName);
+            if (!groupTotals) {
+              groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+              groupTotalsByName.set(row.groupName, groupTotals);
+              groupOrder.push(row.groupName);
+            }
+            for (let m = 1; m <= 12; m += 1) {
+              const cell = row.months[m - 1];
+              totals[m - 1].budgeted += cell.budgeted;
+              totals[m - 1].spent += cell.activity;
+              totals[m - 1].available += cell.available;
+              groupTotals[m - 1].budgeted += cell.budgeted;
+              groupTotals[m - 1].spent += cell.activity;
+              groupTotals[m - 1].available += cell.available;
+            }
+          }
+          for (const row of visibleRows) {
+            if (!visibleByGroup.has(row.groupName)) visibleByGroup.set(row.groupName, []);
+            visibleByGroup.get(row.groupName).push(row);
+          }
 
-          function pushGroupTotal(groupName) {
+          function pushGroupTotal(groupName, groupTotals) {
             if (!groupName) return;
             let line = '<tr class="groupTotal"><td class="group">' + escapeHtml(groupName) + '</td><td class="category">Total</td>';
             for (let m = 1; m <= 12; m += 1) {
@@ -649,35 +687,27 @@
             rowsHtml.push(line);
           }
 
-          for (const row of rows) {
-            if (currentGroup && currentGroup !== row.groupName) {
-              pushGroupTotal(currentGroup);
-              groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
-            }
-            currentGroup = row.groupName;
-            const editIndex = rowIndexById.get(String(row.id));
-            let line = '<tr><td class="group" title="' + escapeHtml(row.groupName) + '">' + escapeHtml(row.groupName) + '</td><td class="category" title="' + escapeHtml(row.categoryName) + '">' + escapeHtml(row.categoryName) + "</td>";
-            for (let m = 1; m <= 12; m += 1) {
-              const cell = row.months[m - 1];
-              totals[m - 1].budgeted += cell.budgeted;
-              totals[m - 1].spent += cell.activity;
-              totals[m - 1].available += cell.available;
-              groupTotals[m - 1].budgeted += cell.budgeted;
-              groupTotals[m - 1].spent += cell.activity;
-              groupTotals[m - 1].available += cell.available;
-              if (m === selected) {
-                line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
-                line += '<td class="num ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
-                line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
-              } else {
-                line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
+          for (const groupName of groupOrder) {
+            const groupRows = visibleByGroup.get(groupName) || [];
+            for (const row of groupRows) {
+              const editIndex = rowIndexById.get(String(row.id));
+              const categoryLabel = row.isArchived ? (row.categoryName + " [archived]") : row.categoryName;
+              let line = '<tr><td class="group" title="' + escapeHtml(row.groupName) + '">' + escapeHtml(row.groupName) + '</td><td class="category" title="' + escapeHtml(categoryLabel) + '">' + escapeHtml(categoryLabel) + "</td>";
+              for (let m = 1; m <= 12; m += 1) {
+                const cell = row.months[m - 1];
+                if (m === selected) {
+                  line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
+                  line += '<td class="num ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
+                  line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
+                } else {
+                  line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
+                }
               }
+              line += "</tr>";
+              rowsHtml.push(line);
             }
-            line += "</tr>";
-            rowsHtml.push(line);
+            pushGroupTotal(groupName, groupTotalsByName.get(groupName) || Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 })));
           }
-
-          pushGroupTotal(currentGroup);
 
           let totalLine = '<tr class="total"><td class="group">' + escapeHtml(totalLabel) + '</td><td class="category">Total</td>';
           for (let m = 1; m <= 12; m += 1) {
@@ -695,12 +725,15 @@
           bodyEl.innerHTML = rowsHtml.join("");
         }
 
-        renderSection($("#incomeHead"), $("#incomeBody"), state.incomeRows, "All Income Groups");
-        renderSection($("#budgetHead"), $("#budgetBody"), state.expenseRows, "All Expense Groups");
+        renderSection($("#incomeHead"), $("#incomeBody"), state.incomeRowsAll, state.incomeRows, "All Income Groups");
+        renderSection($("#budgetHead"), $("#budgetBody"), state.expenseRowsAll, state.expenseRows, "All Expense Groups");
 
         const selectedName = MONTH_NAMES[selected - 1];
-        const allGroups = new Set(state.editableRows.map((r) => r.groupName));
-        $("#summaryLine").textContent = "Groups: " + allGroups.size + ". Categories: " + state.editableRows.length + ". Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
+        const allRows = state.incomeRowsAll.concat(state.expenseRowsAll);
+        const allGroups = new Set(allRows.map((r) => r.groupName));
+        const archivedCount = allRows.filter((r) => r.isArchived).length;
+        const hiddenCount = state.hideArchivedCategories ? archivedCount : 0;
+        $("#summaryLine").textContent = "Groups: " + allGroups.size + ". Categories shown: " + state.editableRows.length + " of " + allRows.length + (hiddenCount ? " (" + hiddenCount + " hidden archived)." : ".") + " Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
         $("#yearValue").textContent = String(state.year);
       }
 
@@ -887,6 +920,8 @@
         state.openingByCategory = new Map();
         state.incomeRows = [];
         state.expenseRows = [];
+        state.incomeRowsAll = [];
+        state.expenseRowsAll = [];
         state.editableRows = [];
         state.loadNotice = "";
         state.editing = null;
@@ -904,7 +939,7 @@
 
         const [categories, budgetLines, activityRows] = await Promise.all([
           listRecordsSafe("categories", {
-            filter: '(kind = "income" || kind = "expense") && is_archived = false',
+            filter: '(kind = "income" || kind = "expense")',
             sort: "name",
             perPage: 500
           }),
@@ -926,12 +961,20 @@
         for (const c of categories) {
           const name = String(c.name || "");
           if (!name) continue;
-          if (categoryIdByName.has(name)) duplicateCategoryNames.add(name);
-          else categoryIdByName.set(name, String(c.id));
+          const currentId = categoryIdByName.get(name);
+          if (!currentId) {
+            categoryIdByName.set(name, String(c.id));
+            continue;
+          }
+          duplicateCategoryNames.add(name);
+          const currentCategory = categoriesById.get(String(currentId));
+          const currentArchived = currentCategory && currentCategory.is_archived === true;
+          const nextArchived = c.is_archived === true;
+          if (currentArchived && !nextArchived) categoryIdByName.set(name, String(c.id));
         }
 
         state.categories = categories
-          .filter((c) => (String(c.kind || "") === "expense" || String(c.kind || "") === "income") && c.is_archived !== true)
+          .filter((c) => String(c.kind || "") === "expense" || String(c.kind || "") === "income")
           .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 
         const budgetByMonth = new Map();
@@ -956,7 +999,7 @@
         const activityByMonth = new Map();
         for (const row of activityRows) {
           const categoryName = String(row.category || "");
-          if (!categoryName || duplicateCategoryNames.has(categoryName)) continue;
+          if (!categoryName) continue;
           const catId = categoryIdByName.get(categoryName);
           if (!catId || !categoriesById.has(catId)) continue;
           const month = String(row.month || "");
@@ -975,7 +1018,7 @@
         state.openingByCategory = openingByCategory;
         state.loadNotice = "";
         if (duplicateCategoryNames.size > 0) {
-          state.loadNotice = "Some activity rows were skipped because category names are not unique.";
+          state.loadNotice = "Some category names are not unique; activity rows were assigned to one category per name.";
         }
       }
 
@@ -1069,6 +1112,12 @@
       });
 
       $("#btnRefresh").addEventListener("click", refreshAll);
+      $("#hideArchivedCategories").addEventListener("change", () => {
+        state.hideArchivedCategories = !!$("#hideArchivedCategories").checked;
+        if (state.editing) stopEditing();
+        applyRowVisibility();
+        renderTable();
+      });
       $("#btnPrevYear").addEventListener("click", async () => {
         if (state.loading) return;
         state.year -= 1;
@@ -1115,6 +1164,7 @@
       $("#pbUrl").value = store.get("pbUrl", "");
       $("#pbEmail").value = store.get("pbEmail", "");
       $("#yearValue").textContent = String(state.year);
+      $("#hideArchivedCategories").checked = state.hideArchivedCategories;
 
       (async function init() {
         SESSION.base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");

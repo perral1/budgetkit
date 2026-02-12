@@ -203,6 +203,19 @@ Budget modules must:
 - include only `category.kind in {income, expense}`
 - consume monthly activity from `v_activity_by_category_month` for activity calculations
 
+### 3.5 Archival Semantics (`is_archived`)
+- Applies to collections that define `is_archived` (`accounts`, `categories`, `payees`).
+- `is_archived = true` means the record is not a selectable option for new search/picker flows and not offered as a default choice when editing transactions/entries.
+- Existing references remain valid:
+  - `entries.account`, `entries.category`, and `txns.payee` may point to archived records.
+  - Modules must still resolve and display those linked archived records correctly.
+  - Archived-linked transactions/entries must remain included in all calculations, balances, and totals.
+- List-style modules for archived-capable collections should support filtering by `unarchived`, `archived`, or `both`.
+- Budget grid behavior for archived categories:
+  - The UI may hide archived category line items.
+  - Hidden archived categories must still contribute to group totals and overall totals.
+  - Activity and availability math must include archived categories when referenced by data.
+
 ## 4. Starting Balances
 
 - Enter all starting balances as normal transactions in the month before the first budgeted month.
