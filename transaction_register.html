@@ -144,6 +144,7 @@
       background: rgba(255, 212, 121, 0.08);
       border-bottom: 0;
       vertical-align: middle;
+      overflow: visible;
     }
     tr.txn-edit-end td { border-bottom: 1px solid rgba(42, 58, 82, 0.75); }
     .inlineInput, .inlineSelect {
@@ -165,6 +166,56 @@
       appearance: none;
       -webkit-appearance: none;
       -moz-appearance: none;
+    }
+    .inlineLookup {
+      position: relative;
+      width: 100%;
+    }
+    .inlineLookupMenu {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 2px);
+      max-height: 180px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 26, 38, 0.98);
+      box-shadow: var(--shadow);
+      z-index: 40;
+      display: none;
+    }
+    .inlineLookup.open .inlineLookupMenu {
+      display: block;
+    }
+    .inlineLookupOption {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid rgba(42, 58, 82, 0.6);
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      padding: 7px 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .inlineLookupOption:last-child {
+      border-bottom: 0;
+    }
+    .inlineLookupOption:hover,
+    .inlineLookupOption:focus {
+      background: rgba(110, 193, 255, 0.14);
+      outline: none;
+    }
+    .inlineLookupOption.active {
+      background: rgba(110, 193, 255, 0.2);
+    }
+    .inlineLookupEmpty {
+      padding: 7px 8px;
+      color: var(--muted);
+      font-size: 11px;
+      display: none;
     }
     .pill {
       border: 1px solid var(--line);
@@ -844,6 +895,223 @@
         return html;
       }
 
+      function inlineLookupMarkup(items, selectedId, labelFn, dataEditKey, includeBlank, placeholder) {
+        const normalizedSelectedId = String(selectedId || "");
+        const options = [];
+        if (includeBlank) options.push({ value: "", label: "" });
+        (items || []).forEach((item) => {
+          options.push({ value: String(item.id), label: labelFn(item) });
+        });
+
+        let selectedLabel = "";
+        const selectedOpt = options.find((opt) => opt.value === normalizedSelectedId);
+        if (selectedOpt) selectedLabel = selectedOpt.label;
+
+        const optionHtml = options.map((opt) => {
+          const display = opt.label || "(none)";
+          const lower = display.toLocaleLowerCase();
+          return '<button type="button" class="inlineLookupOption" data-lookup-value="' + escapeHtml(opt.value) + '" data-lookup-label="' + escapeHtml(lower) + '">' + escapeHtml(display) + "</button>";
+        }).join("");
+
+        return [
+          '<div class="inlineLookup" data-lookup-root="1">',
+          '<input class="inlineInput" type="text" data-lookup-input="1" data-lookup-for="' + escapeHtml(dataEditKey) + '" value="' + escapeHtml(selectedLabel) + '" placeholder="' + escapeHtml(placeholder || "") + '" autocomplete="off" />',
+          '<input type="hidden" data-edit="' + escapeHtml(dataEditKey) + '" value="' + escapeHtml(normalizedSelectedId) + '" />',
+          '<div class="inlineLookupMenu" data-lookup-menu="1">',
+          optionHtml,
+          '<div class="inlineLookupEmpty">No matches</div>',
+          "</div>",
+          "</div>"
+        ].join("");
+      }
+
+      function closeInlineLookups(except) {
+        $$(".inlineLookup.open", $("#registerBody")).forEach((el) => {
+          if (except && (el === except || el.contains(except))) return;
+          el.classList.remove("open");
+          el.removeAttribute("data-lookup-nav-ready");
+        });
+      }
+
+      function normalizeLookupText(raw) {
+        return String(raw == null ? "" : raw).trim().toLocaleLowerCase();
+      }
+
+      function fuzzyLookupScore(label, query) {
+        if (!query) return 0;
+        const text = normalizeLookupText(label);
+        const term = normalizeLookupText(query);
+        if (!text || !term) return 0;
+
+        let qi = 0;
+        let score = 0;
+        let lastMatchAt = -2;
+        let firstMatchAt = -1;
+        let lastMatchPos = -1;
+
+        for (let i = 0; i < text.length && qi < term.length; i += 1) {
+          if (text[i] !== term[qi]) continue;
+          if (firstMatchAt === -1) firstMatchAt = i;
+          if (i === lastMatchAt + 1) score += 6;
+          else score += 3;
+          if (i === 0 || text[i - 1] === " " || text[i - 1] === "-" || text[i - 1] === "[" || text[i - 1] === "(") score += 2;
+          lastMatchAt = i;
+          lastMatchPos = i;
+          qi += 1;
+        }
+
+        if (qi < term.length) return -1;
+        const span = Math.max(0, lastMatchPos - firstMatchAt);
+        score -= span * 0.08;
+        score -= firstMatchAt * 0.12;
+        return score;
+      }
+
+      function firstVisibleLookupOption(lookup) {
+        return $$(".inlineLookupOption", lookup).find((btn) => btn.style.display !== "none") || null;
+      }
+
+      function visibleLookupOptions(lookup) {
+        return $$(".inlineLookupOption", lookup).filter((btn) => btn.style.display !== "none");
+      }
+
+      function activeLookupOption(lookup) {
+        const visible = visibleLookupOptions(lookup);
+        return visible.find((btn) => btn.classList.contains("active")) || null;
+      }
+
+      function setActiveLookupOption(lookup, optionBtn) {
+        const visible = visibleLookupOptions(lookup);
+        visible.forEach((btn) => btn.classList.remove("active"));
+        if (!optionBtn) return;
+        optionBtn.classList.add("active");
+        try { optionBtn.scrollIntoView({ block: "nearest" }); } catch {}
+      }
+
+      function moveActiveLookupOption(lookup, direction) {
+        const visible = visibleLookupOptions(lookup);
+        if (!visible.length) return null;
+        const current = activeLookupOption(lookup);
+        const idx = current ? visible.indexOf(current) : -1;
+        let nextIdx = 0;
+        if (idx === -1) nextIdx = direction > 0 ? 0 : visible.length - 1;
+        else if (direction > 0) nextIdx = Math.min(visible.length - 1, idx + 1);
+        else nextIdx = Math.max(0, idx - 1);
+        const next = visible[nextIdx];
+        setActiveLookupOption(lookup, next);
+        return next;
+      }
+
+      function syncInlineLookupValue(lookup, rawOverride) {
+        if (!lookup) return;
+        const textInput = $('[data-lookup-input="1"]', lookup);
+        const hidden = $('input[type="hidden"][data-edit]', lookup);
+        if (!textInput || !hidden) return;
+        const raw = normalizeLookupText(rawOverride == null ? textInput.value : rawOverride);
+        if (!raw) {
+          hidden.value = "";
+          return;
+        }
+        const exact = $$(".inlineLookupOption", lookup).find((btn) => (btn.getAttribute("data-lookup-label") || "") === raw);
+        hidden.value = exact ? (exact.getAttribute("data-lookup-value") || "") : "";
+      }
+
+      function filterInlineLookupMenu(lookup, queryOverride) {
+        if (!lookup) return;
+        const textInput = $('[data-lookup-input="1"]', lookup);
+        if (!textInput) return;
+        const menu = $('[data-lookup-menu="1"]', lookup);
+        if (!menu) return;
+        const term = String(queryOverride == null ? textInput.value : queryOverride);
+        const ranked = [];
+        $$(".inlineLookupOption", lookup).forEach((btn) => {
+          const label = btn.getAttribute("data-lookup-label") || "";
+          const score = fuzzyLookupScore(label, term);
+          if (score < 0) {
+            btn.style.display = "none";
+            btn.classList.remove("active");
+            return;
+          }
+          ranked.push({ btn: btn, score: score, label: label });
+        });
+        ranked.sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          return a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true });
+        });
+        ranked.forEach((item, idx) => {
+          item.btn.style.display = "block";
+          item.btn.classList.toggle("active", idx === 0);
+          menu.appendChild(item.btn);
+        });
+        const empty = $(".inlineLookupEmpty", lookup);
+        if (empty) empty.style.display = ranked.length ? "none" : "block";
+      }
+
+      function applyInlineLookupPhantomFill(lookup, rawTyped) {
+        if (!lookup) return;
+        const textInput = $('[data-lookup-input="1"]', lookup);
+        if (!textInput) return;
+        const top = firstVisibleLookupOption(lookup);
+        const typed = String(rawTyped == null ? "" : rawTyped);
+        if (!top || !typed) return;
+        const candidate = top.textContent === "(none)" ? "" : String(top.textContent || "");
+        if (!candidate) return;
+        if (!normalizeLookupText(candidate).startsWith(normalizeLookupText(typed))) return;
+        textInput.value = candidate;
+        try { textInput.setSelectionRange(typed.length, candidate.length); } catch {}
+      }
+
+      function previewInlineLookupOption(lookup, optionBtn, rawTyped) {
+        if (!lookup || !optionBtn) return;
+        const textInput = $('[data-lookup-input="1"]', lookup);
+        if (!textInput) return;
+        const typed = String(rawTyped == null ? "" : rawTyped);
+        const candidate = optionBtn.textContent === "(none)" ? "" : String(optionBtn.textContent || "");
+        if (!candidate) {
+          textInput.value = "";
+          return;
+        }
+        textInput.value = candidate;
+        const typedNorm = normalizeLookupText(typed);
+        const candNorm = normalizeLookupText(candidate);
+        if (typed && candNorm.startsWith(typedNorm)) {
+          try { textInput.setSelectionRange(typed.length, candidate.length); } catch {}
+          return;
+        }
+        try { textInput.setSelectionRange(candidate.length, candidate.length); } catch {}
+      }
+
+      function chooseInlineLookupOption(lookup, optionBtn) {
+        if (!lookup || !optionBtn) return;
+        const textInput = $('[data-lookup-input="1"]', lookup);
+        const hidden = $('input[type="hidden"][data-edit]', lookup);
+        if (!textInput || !hidden) return;
+        const value = optionBtn.getAttribute("data-lookup-value") || "";
+        const display = optionBtn.textContent === "(none)" ? "" : optionBtn.textContent;
+        hidden.value = value;
+        textInput.value = display;
+        lookup.setAttribute("data-lookup-typed", display);
+        lookup.setAttribute("data-lookup-searching", "0");
+        lookup.classList.remove("open");
+        lookup.removeAttribute("data-lookup-nav-ready");
+      }
+
+      function restoreInlineLookupOriginal(lookup) {
+        if (!lookup) return;
+        const textInput = $('[data-lookup-input="1"]', lookup);
+        const hidden = $('input[type="hidden"][data-edit]', lookup);
+        if (!textInput || !hidden) return;
+        const originalValue = lookup.getAttribute("data-lookup-original-value") || "";
+        const originalText = lookup.getAttribute("data-lookup-original-text") || "";
+        hidden.value = originalValue;
+        textInput.value = originalText;
+        lookup.setAttribute("data-lookup-typed", originalText);
+        lookup.setAttribute("data-lookup-searching", "0");
+        lookup.classList.remove("open");
+        lookup.removeAttribute("data-lookup-nav-ready");
+        try { textInput.focus({ preventScroll: true }); } catch { textInput.focus(); }
+      }
+
       function sortedCopyByLabel(items, labelFn) {
         return items.slice().sort((a, b) => labelFn(a).localeCompare(labelFn(b), undefined, { sensitivity: "base" }));
       }
@@ -992,7 +1260,9 @@
       function applyPendingInlineFocus() {
         if (!state.editingTxnId || !state.pendingFocusKey) return;
         const key = state.pendingFocusKey;
-        const selector = '[data-edit="' + key + '"]';
+        const selector = (key === "entry-account" || key === "entry-category")
+          ? '[data-lookup-for="' + key + '"]'
+          : '[data-edit="' + key + '"]';
         requestAnimationFrame(function() {
           const el = $("#registerBody " + selector);
           if (!el) return;
@@ -1139,8 +1409,8 @@
           const entryRows = $$('tr[data-edit-entry="1"]', $("#registerBody"));
           for (const row of entryRows) {
             const entryId = row.getAttribute("data-entry-id") || "";
-            const account = $('select[data-edit="entry-account"]', row).value;
-            const category = $('select[data-edit="entry-category"]', row).value;
+            const account = $('input[data-edit="entry-account"]', row).value;
+            const category = $('input[data-edit="entry-category"]', row).value;
             const qtyRaw = $('input[data-edit="entry-qty"]', row).value.trim();
             const status = $('select[data-edit="entry-status"]', row).value;
 
@@ -1287,9 +1557,9 @@
               trSingle.setAttribute("data-entry-id", String(e.id || ""));
               trSingle.innerHTML = [
                 '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), false) + "</select></td>",
+                '<td>' + inlineLookupMarkup(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), "entry-account", false, "Select account") + "</td>",
                 '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), true) + "</select></td>",
+                '<td>' + inlineLookupMarkup(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), "entry-category", true, "Optional category") + "</td>",
                 '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
@@ -1319,9 +1589,9 @@
               trE.setAttribute("data-entry-id", String(e.id || ""));
               trE.innerHTML = [
                 "<td></td>",
-                '<td><select class="inlineSelect" data-edit="entry-account">' + optionList(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), false) + "</select></td>",
+                '<td>' + inlineLookupMarkup(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), "entry-account", false, "Select account") + "</td>",
                 "<td></td>",
-                '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), true) + "</select></td>",
+                '<td>' + inlineLookupMarkup(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), "entry-category", true, "Optional category") + "</td>",
                 "<td></td>",
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
@@ -1602,16 +1872,103 @@
 
       $("#registerBody").addEventListener("keydown", function(e) {
         if (!state.editingTxnId) return;
+        const t = e.target;
+        if (t && t.matches('input[data-lookup-input="1"]')) {
+          const lookup = t.closest(".inlineLookup");
+          const isSearching = lookup && lookup.getAttribute("data-lookup-searching") === "1";
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            if (!lookup) return;
+            lookup.classList.add("open");
+            const typed = lookup.getAttribute("data-lookup-typed");
+            if (!lookup.getAttribute("data-lookup-nav-ready")) {
+              filterInlineLookupMenu(lookup, typed == null ? t.value : typed);
+              lookup.setAttribute("data-lookup-nav-ready", "1");
+            }
+            const next = moveActiveLookupOption(lookup, e.key === "ArrowDown" ? 1 : -1);
+            previewInlineLookupOption(lookup, next, typed == null ? t.value : typed);
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            if (lookup && isSearching) {
+              restoreInlineLookupOriginal(lookup);
+              return;
+            }
+            cancelInlineEdit();
+            return;
+          }
+          if (e.key === "Tab") {
+            if (lookup) {
+              const top = activeLookupOption(lookup) || firstVisibleLookupOption(lookup);
+              if (top) chooseInlineLookupOption(lookup, top);
+            }
+            return;
+          }
+          if (e.key === "Enter") {
+            if (lookup) {
+              if (isSearching) {
+                const top = activeLookupOption(lookup) || firstVisibleLookupOption(lookup);
+                if (top) chooseInlineLookupOption(lookup, top);
+                e.preventDefault();
+                return;
+              }
+            }
+          }
+        }
         if (e.key === "Escape") {
           e.preventDefault();
           cancelInlineEdit();
           return;
         }
         if (e.key !== "Enter") return;
-        const t = e.target;
         if (!t || !(t.matches("input") || t.matches("select"))) return;
         e.preventDefault();
         saveInlineEdit();
+      });
+
+      $("#registerBody").addEventListener("focusin", function(e) {
+        const input = e.target && e.target.matches('input[data-lookup-input="1"]') ? e.target : null;
+        if (!input) return;
+        const lookup = input.closest(".inlineLookup");
+        if (!lookup) return;
+        const hidden = $('input[type="hidden"][data-edit]', lookup);
+        closeInlineLookups(lookup);
+        lookup.classList.add("open");
+        lookup.setAttribute("data-lookup-original-text", input.value || "");
+        lookup.setAttribute("data-lookup-original-value", hidden ? (hidden.value || "") : "");
+        lookup.setAttribute("data-lookup-searching", "0");
+        lookup.setAttribute("data-lookup-typed", input.value || "");
+        lookup.removeAttribute("data-lookup-nav-ready");
+        filterInlineLookupMenu(lookup, lookup.getAttribute("data-lookup-typed") || "");
+      });
+
+      $("#registerBody").addEventListener("input", function(e) {
+        const input = e.target && e.target.matches('input[data-lookup-input="1"]') ? e.target : null;
+        if (!input) return;
+        const lookup = input.closest(".inlineLookup");
+        if (!lookup) return;
+        const rawTyped = input.value;
+        lookup.classList.add("open");
+        lookup.setAttribute("data-lookup-searching", "1");
+        lookup.setAttribute("data-lookup-typed", rawTyped);
+        lookup.removeAttribute("data-lookup-nav-ready");
+        filterInlineLookupMenu(lookup, rawTyped);
+        applyInlineLookupPhantomFill(lookup, rawTyped);
+        syncInlineLookupValue(lookup, rawTyped);
+      });
+
+      $("#registerBody").addEventListener("click", function(e) {
+        const option = e.target ? e.target.closest(".inlineLookupOption") : null;
+        if (!option) return;
+        const lookup = option.closest(".inlineLookup");
+        if (!lookup) return;
+        chooseInlineLookupOption(lookup, option);
+      });
+
+      document.addEventListener("click", function(e) {
+        if (e.target && e.target.closest("#registerBody .inlineLookup")) return;
+        closeInlineLookups();
       });
 
       $("#pbUrl").value = store.get("pbUrl", "");
