@@ -167,6 +167,35 @@
       -webkit-appearance: none;
       -moz-appearance: none;
     }
+    .statusCycleBtn {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      cursor: pointer;
+      font-size: 15px;
+      line-height: 1;
+    }
+    .statusCycleBtn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .amountCell {
+      display: flex;
+      justify-content: flex-end;
+      width: 100%;
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum" 1;
+    }
+    .amountParts {
+      display: inline-grid;
+      grid-template-columns: 1ch auto 1ch var(--frac-width, 2ch) 1ch;
+      align-items: baseline;
+      min-width: 0;
+    }
+    .amountWhole { text-align: right; }
+    .amountSign, .amountDot, .amountFrac, .amountClose { text-align: center; }
     .inlineLookup {
       position: relative;
       width: 100%;
@@ -307,11 +336,7 @@
             </div>
             <div class="field">
               <label for="fltStatus">Status</label>
-              <select id="fltStatus">
-                <option value="">(any)</option>
-                <option value="pending">pending</option>
-                <option value="cleared">cleared</option>
-              </select>
+              <select id="fltStatus"></select>
             </div>
             <div class="field">
               <label for="fltBudgetOnly">Budget kinds</label>
@@ -375,6 +400,10 @@
         set(k, v) { try { localStorage.setItem(k, v); } catch {} },
         del(k) { try { localStorage.removeItem(k); } catch {} }
       };
+      const ENTRY_STATUS_OPTIONS = [
+        { value: "pending", emoji: "\u2610", label: "pending" },
+        { value: "cleared", emoji: "\u2611", label: "cleared" }
+      ];
 
       const SESSION = { base: "", token: "" };
       const state = {
@@ -481,6 +510,49 @@
         if (precision === 0) return sign + whole.toLocaleString();
         const frac = String(abs % scale).padStart(precision, "0");
         return sign + whole.toLocaleString() + "." + frac;
+      }
+
+      function accountingPartsFromMinor(minor, precision) {
+        if (minor == null || minor === "") return null;
+        const n = Number(minor);
+        if (!Number.isFinite(n)) return null;
+        const safePrecision = normalizePrecision(precision);
+        const scale = 10 ** safePrecision;
+        const absMinor = Math.abs(Math.trunc(n));
+        const whole = Math.floor(absMinor / scale).toLocaleString();
+        const frac = safePrecision > 0 ? String(absMinor % scale).padStart(safePrecision, "0") : "";
+        return { negative: n < 0, whole: whole, frac: frac, precision: safePrecision };
+      }
+
+      function accountingPartsFromMajor(major, precision) {
+        const n = Number(major);
+        if (!Number.isFinite(n)) return null;
+        const safePrecision = normalizePrecision(precision);
+        const absFixed = Math.abs(n).toFixed(safePrecision);
+        const parts = absFixed.split(".");
+        const wholeNum = Number(parts[0] || "0");
+        return { negative: n < 0, whole: wholeNum.toLocaleString(), frac: parts[1] || "", precision: safePrecision };
+      }
+
+      function amountCellMarkupFromParts(parts, titleText) {
+        if (!parts) return "";
+        const signLeft = parts.negative ? "(" : "\u00A0";
+        const signRight = parts.negative ? ")" : "\u00A0";
+        const dot = parts.precision > 0 ? "." : "\u00A0";
+        const frac = parts.precision > 0 ? parts.frac : "";
+        return '<span class="amountCell" title="' + escapeHtml(titleText || "") + '"><span class="amountParts" style="--frac-width:' + parts.precision + 'ch;"><span class="amountSign">' + escapeHtml(signLeft) + '</span><span class="amountWhole">' + escapeHtml(parts.whole) + '</span><span class="amountDot">' + escapeHtml(dot) + '</span><span class="amountFrac">' + escapeHtml(frac) + '</span><span class="amountClose">' + escapeHtml(signRight) + "</span></span></span>";
+      }
+
+      function amountCellMarkupFromMinor(minor, precision) {
+        const parts = accountingPartsFromMinor(minor, precision);
+        return amountCellMarkupFromParts(parts, fmtMinor(minor, precision));
+      }
+
+      function amountCellMarkupFromMajor(major, precision) {
+        const parts = accountingPartsFromMajor(major, precision);
+        if (!parts) return "";
+        const title = (parts.negative ? "-" : "") + parts.whole + (parts.precision > 0 ? "." + parts.frac : "");
+        return amountCellMarkupFromParts(parts, title);
       }
 
       function setStatus(kind, message) {
@@ -873,6 +945,63 @@
       function qtyMajorForEntry(entry) {
         const precision = assetPrecision(getEntryAssetId(entry));
         return minorToMajor(parseMinorInt(entry && entry.qty, "entries.qty"), precision);
+      }
+
+      function entryStatusValues() {
+        return ENTRY_STATUS_OPTIONS.map((s) => s.value);
+      }
+
+      function entryStatusOptionByValue(value) {
+        const key = String(value || "");
+        return ENTRY_STATUS_OPTIONS.find((s) => s.value === key) || null;
+      }
+
+      function entryStatusEmoji(value) {
+        const found = entryStatusOptionByValue(value);
+        return found ? found.emoji : "\u2753";
+      }
+
+      function entryStatusLabel(value) {
+        const found = entryStatusOptionByValue(value);
+        return found ? found.label : (String(value || "") || "unknown");
+      }
+
+      function nextEntryStatusValue(currentValue) {
+        const values = entryStatusValues();
+        if (!values.length) return String(currentValue || "");
+        const current = String(currentValue || "");
+        const idx = values.indexOf(current);
+        if (idx < 0) return values[0];
+        return values[(idx + 1) % values.length];
+      }
+
+      function statusSelectOptionsMarkup(selectedValue) {
+        const selected = String(selectedValue || "");
+        const knownValues = new Set(entryStatusValues());
+        const options = [];
+        if (selected && !knownValues.has(selected)) {
+          options.push('<option value="' + escapeHtml(selected) + '" selected>' + escapeHtml(selected) + "</option>");
+        }
+        options.push(...ENTRY_STATUS_OPTIONS.map((s) => {
+          return '<option value="' + escapeHtml(s.value) + '"' + (s.value === selected ? " selected" : "") + ">" + escapeHtml(s.label) + "</option>";
+        }));
+        return options.join("");
+      }
+
+      function refillStatusFilterSelect() {
+        const sel = $("#fltStatus");
+        if (!sel) return;
+        const current = String(sel.value || "");
+        sel.innerHTML = '<option value="">(any)</option>' + ENTRY_STATUS_OPTIONS
+          .map((s) => '<option value="' + escapeHtml(s.value) + '">' + escapeHtml(s.emoji + " " + s.label) + "</option>")
+          .join("");
+        sel.value = entryStatusValues().includes(current) ? current : "";
+      }
+
+      function statusCellButtonMarkup(entryId, statusValue) {
+        const current = String(statusValue || "");
+        const title = entryStatusLabel(current);
+        return '<button type="button" class="statusCycleBtn" data-status-cycle="1" data-entry-id="' + escapeHtml(String(entryId || "")) + '" title="' + escapeHtml(title + " (click to cycle)") + '" aria-label="' + escapeHtml("Status: " + title + ". Click to cycle.") + '">' + escapeHtml(entryStatusEmoji(current)) + "</button>";
       }
 
       function editableAccountOptions(selectedAccountId) {
@@ -1653,6 +1782,32 @@
         }
       }
 
+      async function cycleEntryStatus(entryId) {
+        const id = String(entryId || "");
+        if (!SESSION.token || !id) return;
+        if (state.loading || state.saving || state.deleting || state.editingTxnId) return;
+
+        const idx = state.entries.findIndex((e) => String((e && e.id) || "") === id);
+        if (idx < 0) return;
+        const current = String((state.entries[idx] && state.entries[idx].status) || "");
+        const next = nextEntryStatusValue(current);
+        if (!next || next === current) return;
+
+        try {
+          state.saving = true;
+          setBusy();
+          await updateRecord("entries", id, { status: next });
+          state.entries[idx] = Object.assign({}, state.entries[idx], { status: next });
+          renderRegister();
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Status update failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.saving = false;
+          setBusy();
+        }
+      }
+
       function renderRegister() {
         const body = $("#registerBody");
 
@@ -1748,7 +1903,7 @@
                 '<td>' + inlineLookupMarkup(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), "entry-category", true, "Optional category") + "</td>",
                 '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
+                '<td><select class="inlineSelect" data-edit="entry-status">' + statusSelectOptionsMarkup(e.status) + "</select></td>"
               ].join("");
               body.appendChild(trSingle);
               return;
@@ -1780,7 +1935,7 @@
                 '<td>' + inlineLookupMarkup(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), "entry-category", true, "Optional category") + "</td>",
                 "<td></td>",
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
-                '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
+                '<td><select class="inlineSelect" data-edit="entry-status">' + statusSelectOptionsMarkup(e.status) + "</select></td>"
               ].join("");
               body.appendChild(trE);
             });
@@ -1794,19 +1949,14 @@
             const tr = document.createElement("tr");
             if (isSelected) tr.classList.add("selected");
 
-            let qtyTxt = e.qty == null ? "" : String(e.qty);
-            try {
-              qtyTxt = fmtMinor(e.qty, assetPrecision(e.asset));
-            } catch {}
-
             tr.innerHTML = [
               "<td>" + escapeHtml(fmtDate(e.date)) + "</td>",
               "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
               "<td>" + escapeHtml(payeeDisplayName(txn.payee)) + "</td>",
               "<td><span class=\"pill\">" + escapeHtml(categoryDisplayName(e.category)) + "</span></td>",
               "<td>" + escapeHtml(txn.memo || "") + "</td>",
-              "<td>" + escapeHtml(qtyTxt) + "</td>",
-              "<td>" + escapeHtml(e.status || "") + "</td>"
+              "<td>" + amountCellMarkupFromMinor(e.qty, assetPrecision(e.asset)) + "</td>",
+              "<td>" + statusCellButtonMarkup(e.id, e.status) + "</td>"
             ].join("");
 
             tr.addEventListener("click", function(ev) { selectTxn(e.txn || "", ev); });
@@ -1822,7 +1972,8 @@
               return sum;
             }
           }, 0);
-          const totalTxt = totalQty.toLocaleString(undefined, { maximumFractionDigits: 8 });
+          const groupPrecisions = Array.from(new Set(group.map((e) => assetPrecision(e.asset))));
+          const totalPrecision = groupPrecisions.length === 1 ? groupPrecisions[0] : 2;
 
           const parentRow = document.createElement("tr");
           parentRow.className = "txn-parent";
@@ -1833,7 +1984,7 @@
             "<td>" + escapeHtml(payeeDisplayName(txn.payee)) + "</td>",
             "<td></td>",
             "<td>" + escapeHtml(txn.memo || "") + "</td>",
-            "<td>" + escapeHtml(totalTxt) + "</td>",
+            "<td>" + amountCellMarkupFromMajor(totalQty, totalPrecision) + "</td>",
             "<td></td>"
           ].join("");
           parentRow.addEventListener("click", function(ev) { selectTxn(txnId, ev); });
@@ -1844,19 +1995,14 @@
             const tr = document.createElement("tr");
             tr.className = "txn-sub" + (idx === group.length - 1 ? " txn-sub-end" : "");
             if (isSelected) tr.classList.add("selected");
-
-            let qtyTxt = e.qty == null ? "" : String(e.qty);
-            try {
-              qtyTxt = fmtMinor(e.qty, assetPrecision(e.asset));
-            } catch {}
             tr.innerHTML = [
               "<td></td>",
               "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
               "<td></td>",
               "<td><span class=\"pill\">" + escapeHtml(categoryDisplayName(e.category)) + "</span></td>",
               "<td></td>",
-              "<td>" + escapeHtml(qtyTxt) + "</td>",
-              "<td>" + escapeHtml(e.status || "") + "</td>"
+              "<td>" + amountCellMarkupFromMinor(e.qty, assetPrecision(e.asset)) + "</td>",
+              "<td>" + statusCellButtonMarkup(e.id, e.status) + "</td>"
             ].join("");
 
             tr.addEventListener("click", function(ev) { selectTxn(txnId, ev); });
@@ -2156,11 +2302,24 @@
       });
 
       $("#registerBody").addEventListener("click", function(e) {
+        const toggleBtn = e.target ? e.target.closest('button[data-status-cycle="1"]') : null;
+        if (toggleBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          cycleEntryStatus(toggleBtn.getAttribute("data-entry-id") || "");
+          return;
+        }
         const option = e.target ? e.target.closest(".inlineLookupOption") : null;
         if (!option) return;
         const lookup = option.closest(".inlineLookup");
         if (!lookup) return;
         chooseInlineLookupOption(lookup, option);
+      });
+      $("#registerBody").addEventListener("dblclick", function(e) {
+        const toggleBtn = e.target ? e.target.closest('button[data-status-cycle="1"]') : null;
+        if (!toggleBtn) return;
+        e.preventDefault();
+        e.stopPropagation();
       });
 
       document.addEventListener("click", function(e) {
@@ -2170,6 +2329,7 @@
 
       $("#pbUrl").value = store.get("pbUrl", "");
       $("#pbEmail").value = store.get("pbEmail", "");
+      refillStatusFilterSelect();
       $("#perPage").value = String(state.perPage);
       updateRegisterPageInfo();
 

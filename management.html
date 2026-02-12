@@ -207,6 +207,27 @@
     .dot{ width:10px; height:10px; border-radius:999px; margin-top:3px; background:var(--accent); flex:0 0 auto; }
     .dot.ok{ background:var(--ok); }
     .dot.bad{ background:var(--danger); }
+    .dupTable{
+      width:100%;
+      border-collapse:collapse;
+      font-size:12px;
+    }
+    .dupListWrap{
+      max-height:min(58vh, 560px);
+      overflow:auto;
+      border:1px solid rgba(34,48,68,.6);
+      border-radius:10px;
+    }
+    .dupTable th, .dupTable td{
+      border-bottom:1px solid rgba(34,48,68,.75);
+      padding:8px 10px;
+      vertical-align:top;
+    }
+    .dupScore{
+      font-weight:700;
+      color:#d8e6ff;
+      font-family:var(--mono);
+    }
 
     @media (max-width: 880px){
       input[type="text"], input[type="password"], select{ min-width: 180px; }
@@ -335,6 +356,41 @@
         <div class="row">
           <button class="btn" id="btnCancel">Cancel</button>
           <button class="btn primary" id="btnSave">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modalBackdrop" id="dupModalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dupModalTitle">
+      <div class="modalHead">
+        <h2 id="dupModalTitle">Possible Payee Duplicates</h2>
+        <button class="btn ghost" id="btnDupClose">✕</button>
+      </div>
+      <div class="modalBody">
+        <div class="help" id="dupHelp" style="margin-bottom:12px;"></div>
+        <div class="dupListWrap">
+          <table class="dupTable" aria-label="possible payee duplicates">
+            <thead>
+              <tr>
+                <th>Confidence</th>
+                <th>Match</th>
+                <th>Payee A</th>
+                <th>Payee B</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="dupTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modalFoot">
+        <div class="row">
+          <span class="mono" id="dupMeta"></span>
+        </div>
+        <div class="row">
+          <button class="btn" id="btnDupRefresh">Recompute</button>
+          <button class="btn" id="btnDupDone">Done</button>
         </div>
       </div>
     </div>
@@ -620,6 +676,8 @@
   let payeeTxnCounts = new Map();
   let payeeNewestTxnDates = new Map();
   let payeeIdsByCategory = new Map();
+  let duplicateCandidates = [];
+  let duplicatePayeeById = new Map();
   let editing = { mode:"new", id:null, ids:[], data:null, mixedKeys:new Set(), lockedKeys:new Set() };
   const BULK_LOCKED_FIELDS = {
     accounts: new Set(["name"]),
@@ -681,6 +739,117 @@
     const d = parseTxnDate(raw);
     if(!d) return String(raw || "");
     return d.toISOString().slice(0,10);
+  }
+
+  function normalizePayeeName(raw){
+    const suffixes = new Set(["inc","llc","co","corp","corporation","company","ltd","plc","the"]);
+    const cleaned = String(raw || "")
+      .toLowerCase()
+      .replaceAll("&", " and ")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if(!cleaned) return "";
+    const parts = cleaned.split(" ").filter(Boolean).filter((p) => !suffixes.has(p));
+    return parts.join(" ").trim();
+  }
+
+  function diceCoefficient(a, b){
+    const s1 = String(a || "");
+    const s2 = String(b || "");
+    if(!s1 || !s2) return 0;
+    if(s1 === s2) return 1;
+    if(s1.length < 2 || s2.length < 2) return 0;
+    const grams = (s) => {
+      const m = new Map();
+      for(let i = 0; i < s.length - 1; i += 1){
+        const g = s.slice(i, i + 2);
+        m.set(g, (m.get(g) || 0) + 1);
+      }
+      return m;
+    };
+    const g1 = grams(s1);
+    const g2 = grams(s2);
+    let overlap = 0;
+    g1.forEach((count, gram) => {
+      overlap += Math.min(count, g2.get(gram) || 0);
+    });
+    return (2 * overlap) / ((s1.length - 1) + (s2.length - 1));
+  }
+
+  function buildPayeeDuplicateCandidates(payees){
+    const out = [];
+    const seenPairs = new Set();
+    const normalizedRows = (payees || []).map((p) => ({
+      id: String(p?.id || ""),
+      name: String(p?.name || ""),
+      card: String(p?.card_category || ""),
+      normalized: normalizePayeeName(p?.name || "")
+    })).filter((r) => r.id && r.name);
+
+    const byNormalized = new Map();
+    normalizedRows.forEach((r) => {
+      if(!r.normalized) return;
+      const arr = byNormalized.get(r.normalized) || [];
+      arr.push(r);
+      byNormalized.set(r.normalized, arr);
+    });
+
+    byNormalized.forEach((arr, norm) => {
+      if(arr.length < 2) return;
+      for(let i = 0; i < arr.length; i += 1){
+        for(let j = i + 1; j < arr.length; j += 1){
+          const a = arr[i];
+          const b = arr[j];
+          const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+          seenPairs.add(k);
+          out.push({
+            idA: a.id,
+            idB: b.id,
+            confidence: 1,
+            reason: `exact normalized match: "${norm}"`
+          });
+        }
+      }
+    });
+
+    for(let i = 0; i < normalizedRows.length; i += 1){
+      for(let j = i + 1; j < normalizedRows.length; j += 1){
+        const a = normalizedRows[i];
+        const b = normalizedRows[j];
+        const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+        if(seenPairs.has(k)) continue;
+        const scoreBase = diceCoefficient(a.normalized, b.normalized);
+        let score = scoreBase;
+        if(a.card && b.card && a.card === b.card) score += 0.04;
+        score = Math.min(0.99, score);
+        if(score < 0.88) continue;
+        out.push({
+          idA: a.id,
+          idB: b.id,
+          confidence: score,
+          reason: "fuzzy normalized name"
+        });
+      }
+    }
+
+    out.sort((x, y) => {
+      if(y.confidence !== x.confidence) return y.confidence - x.confidence;
+      return (x.reason || "").localeCompare(y.reason || "", undefined, { sensitivity:"base" });
+    });
+    return out;
+  }
+
+  function pickDuplicateMergeTarget(a, b){
+    const countA = Number(payeeTxnCounts.get(String(a?.id || "")) || 0);
+    const countB = Number(payeeTxnCounts.get(String(b?.id || "")) || 0);
+    if(countA !== countB) return countA > countB ? a : b;
+    const dateA = parseTxnDate(payeeNewestTxnDates.get(String(a?.id || "")) || "");
+    const dateB = parseTxnDate(payeeNewestTxnDates.get(String(b?.id || "")) || "");
+    const tsA = dateA ? dateA.getTime() : 0;
+    const tsB = dateB ? dateB.getTime() : 0;
+    if(tsA !== tsB) return tsA > tsB ? a : b;
+    return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity:"base" }) <= 0 ? a : b;
   }
 
   async function listAllEntriesForStats(){
@@ -1025,47 +1194,7 @@
     const confirmMsg = `Merge ${selectedRows.length} payees into "${targetLabel}"? Transactions from ${sources.length} selected payee(s) will be moved, then the other selected payees will be deleted.`;
     if(!window.confirm(confirmMsg)) return;
 
-    let moved = 0;
-    let moveFailed = 0;
-    let deleted = 0;
-    let deleteFailed = 0;
-    let firstError = "";
-    let adoptedCategory = "";
-
-    const targetCategory = String(target?.card_category || "").trim();
-    if(!targetCategory){
-      const firstSourceCategory = sources
-        .map((p) => String(p?.card_category || "").trim())
-        .find((v) => !!v);
-      if(firstSourceCategory){
-        await updateRecord("payees", target.id, { card_category: firstSourceCategory });
-        target.card_category = firstSourceCategory;
-        adoptedCategory = firstSourceCategory;
-      }
-    }
-
-    const allTxns = await listAllTxnsForStats();
-    const txnsToMove = allTxns.filter(t => sourceIds.has(String(t?.payee || "")));
-
-    for(const txn of txnsToMove){
-      try{
-        await updateRecord("txns", txn.id, { payee: target.id });
-        moved += 1;
-      }catch(e){
-        moveFailed += 1;
-        if(!firstError) firstError = e?.message || String(e);
-      }
-    }
-
-    for(const source of sources){
-      try{
-        await deleteRecord("payees", source.id);
-        deleted += 1;
-      }catch(e){
-        deleteFailed += 1;
-        if(!firstError) firstError = e?.message || String(e);
-      }
-    }
+    const { moved, moveFailed, deleted, deleteFailed, firstError, adoptedCategory } = await mergePayeesByIds(target.id, sourceIds, { adoptCardCategory: true });
 
     if(moveFailed || deleteFailed){
       toast(
@@ -1146,6 +1275,171 @@
     refresh();
   }
 
+  async function mergePayeesByIds(targetId, sourceIds, opts={}){
+    const targetIdStr = String(targetId || "");
+    const sourceIdList = Array.from(sourceIds || [])
+      .map((id) => String(id || ""))
+      .filter((id) => !!id && id !== targetIdStr);
+    if(!targetIdStr || !sourceIdList.length){
+      throw new Error("Missing merge target/source.");
+    }
+    const sourceIdSet = new Set(sourceIdList);
+    const adoptCardCategory = opts.adoptCardCategory !== false;
+
+    let adoptedCategory = "";
+    if(adoptCardCategory){
+      let target = records.find((r) => String(r?.id || "") === targetIdStr);
+      if(!target){
+        try{ target = await getRecord("payees", targetIdStr); }catch{}
+      }
+      const targetCategory = String(target?.card_category || "").trim();
+      if(!targetCategory){
+        let sourceCategory = "";
+        for(const sid of sourceIdList){
+          let src = records.find((r) => String(r?.id || "") === sid);
+          if(!src){
+            try{ src = await getRecord("payees", sid); }catch{}
+          }
+          const cat = String(src?.card_category || "").trim();
+          if(cat){
+            sourceCategory = cat;
+            break;
+          }
+        }
+        if(sourceCategory){
+          await updateRecord("payees", targetIdStr, { card_category: sourceCategory });
+          adoptedCategory = sourceCategory;
+        }
+      }
+    }
+
+    let moved = 0;
+    let moveFailed = 0;
+    let deleted = 0;
+    let deleteFailed = 0;
+    let firstError = "";
+    const allTxns = await listAllTxnsForStats();
+    const txnsToMove = allTxns.filter((t) => sourceIdSet.has(String(t?.payee || "")));
+
+    for(const txn of txnsToMove){
+      try{
+        await updateRecord("txns", txn.id, { payee: targetIdStr });
+        moved += 1;
+      }catch(e){
+        moveFailed += 1;
+        if(!firstError) firstError = e?.message || String(e);
+      }
+    }
+
+    for(const sid of sourceIdList){
+      try{
+        await deleteRecord("payees", sid);
+        deleted += 1;
+      }catch(e){
+        deleteFailed += 1;
+        if(!firstError) firstError = e?.message || String(e);
+      }
+    }
+
+    return { moved, moveFailed, deleted, deleteFailed, firstError, adoptedCategory };
+  }
+
+  function showDupModal(on){
+    $("#dupModalBackdrop").classList.toggle("show", !!on);
+    $("#dupModalBackdrop").setAttribute("aria-hidden", String(!on));
+  }
+
+  function renderDuplicateCandidates(){
+    const tbody = $("#dupTableBody");
+    if(!tbody) return;
+    tbody.innerHTML = "";
+    $("#dupMeta").textContent = `${duplicateCandidates.length} candidate pair(s)`;
+    $("#dupHelp").textContent = "Confidence 1.00 means exact normalized-name match. Lower scores are fuzzy matches and should be reviewed manually.";
+
+    if(!duplicateCandidates.length){
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 5;
+      td.className = "mono";
+      td.textContent = "No duplicate candidates found.";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    duplicateCandidates.forEach((cand) => {
+      const a = duplicatePayeeById.get(String(cand.idA || ""));
+      const b = duplicatePayeeById.get(String(cand.idB || ""));
+      if(!a || !b) return;
+      const target = pickDuplicateMergeTarget(a, b);
+      const source = String(target.id || "") === String(a.id || "") ? b : a;
+      const countA = Number(payeeTxnCounts.get(String(a.id || "")) || 0);
+      const countB = Number(payeeTxnCounts.get(String(b.id || "")) || 0);
+      const newestA = fmtTxnDate(payeeNewestTxnDates.get(String(a.id || "")) || "");
+      const newestB = fmtTxnDate(payeeNewestTxnDates.get(String(b.id || "")) || "");
+      const cardA = String(a?.card_category || "").trim() || "(none)";
+      const cardB = String(b?.card_category || "").trim() || "(none)";
+
+      const tr = document.createElement("tr");
+
+      const tdScore = document.createElement("td");
+      tdScore.innerHTML = `<span class="dupScore">${Number(cand.confidence || 0).toFixed(2)}</span>`;
+      tr.appendChild(tdScore);
+
+      const tdReason = document.createElement("td");
+      tdReason.textContent = cand.reason || "";
+      tr.appendChild(tdReason);
+
+      const tdA = document.createElement("td");
+      tdA.innerHTML = `${escapeHtml(a.name || a.id)}<br><span class="mono">card=${escapeHtml(cardA)} txns=${countA} newest=${escapeHtml(newestA || "-")}</span>`;
+      tr.appendChild(tdA);
+
+      const tdB = document.createElement("td");
+      tdB.innerHTML = `${escapeHtml(b.name || b.id)}<br><span class="mono">card=${escapeHtml(cardB)} txns=${countB} newest=${escapeHtml(newestB || "-")}</span>`;
+      tr.appendChild(tdB);
+
+      const tdAction = document.createElement("td");
+      const btnMerge = document.createElement("button");
+      btnMerge.className = "btn";
+      btnMerge.textContent = `Merge into ${target.name || target.id}`;
+      btnMerge.addEventListener("click", async () => {
+        const msg = `Merge "${source.name || source.id}" into "${target.name || target.id}"?\nThis will move linked txns and then delete "${source.name || source.id}".`;
+        if(!window.confirm(msg)) return;
+        try{
+          const res = await mergePayeesByIds(target.id, [source.id], { adoptCardCategory: true });
+          if(res.moveFailed || res.deleteFailed){
+            toast("bad", "Merge partial", `Moved ${res.moved}, failed ${res.moveFailed}. Deleted ${res.deleted}, failed ${res.deleteFailed}.` + (res.adoptedCategory ? ` Card category set to ${res.adoptedCategory}.` : "") + (res.firstError ? ` First error: ${res.firstError}` : ""));
+          }else{
+            toast("ok", "Merged", `"${source.name || source.id}" merged into "${target.name || target.id}".` + (res.adoptedCategory ? ` Card category set to ${res.adoptedCategory}.` : ""));
+          }
+          await refresh();
+          showDupModal(false);
+          let mergedPayee = records.find((r) => String(r?.id || "") === String(target.id || ""));
+          if(!mergedPayee){
+            try{
+              mergedPayee = await getRecord("payees", target.id);
+            }catch{}
+          }
+          if(mergedPayee) openEditor("edit", mergedPayee);
+        }catch(e){
+          toast("bad", "Merge failed", e?.message || String(e));
+        }
+      });
+      tdAction.appendChild(btnMerge);
+      tr.appendChild(tdAction);
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function runPayeeDuplicateDetection(openModal){
+    const allPayees = await listAllRecords("payees", { q:"", showArchived:true, onlyArchived:false, perPage:500, sort:"name" });
+    duplicatePayeeById = new Map(allPayees.map((p) => [String(p?.id || ""), p]));
+    duplicateCandidates = buildPayeeDuplicateCandidates(allPayees.filter((p) => String(p?.name || "").trim()));
+    renderDuplicateCandidates();
+    if(openModal) showDupModal(true);
+  }
+
   function renderBulkActions(){
     const wrap = $("#bulkActions");
     if(!wrap) return;
@@ -1164,6 +1458,18 @@
           }
         });
         wrap.appendChild(btnCleanup);
+
+        const btnDupes = document.createElement("button");
+        btnDupes.className = "btn";
+        btnDupes.textContent = "Find duplicates";
+        btnDupes.addEventListener("click", async () => {
+          try{
+            await runPayeeDuplicateDetection(true);
+          }catch(e){
+            toast("bad", "Duplicate scan failed", e?.message || String(e));
+          }
+        });
+        wrap.appendChild(btnDupes);
         wrap.classList.add("active");
       }else{
         wrap.classList.remove("active");
@@ -1427,6 +1733,7 @@
 
   function setActiveTab(tab){
     activeTab = tab;
+    if(tab !== "payees") showDupModal(false);
     const paging = tablePagingStateForTab(tab);
     paging.page = 1;
     $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
@@ -2000,8 +2307,22 @@
 
   $("#btnClose").addEventListener("click", () => showModal(false));
   $("#btnCancel").addEventListener("click", () => showModal(false));
+  $("#btnDupClose").addEventListener("click", () => showDupModal(false));
+  $("#btnDupDone").addEventListener("click", () => showDupModal(false));
+  $("#btnDupRefresh").addEventListener("click", async () => {
+    try{
+      await runPayeeDuplicateDetection(true);
+    }catch(e){
+      toast("bad", "Duplicate scan failed", e?.message || String(e));
+    }
+  });
   $("#modalBackdrop").addEventListener("click", (e) => { if(e.target === $("#modalBackdrop")) showModal(false); });
-  window.addEventListener("keydown", (e) => { if(e.key === "Escape" && $("#modalBackdrop").classList.contains("show")) showModal(false); });
+  $("#dupModalBackdrop").addEventListener("click", (e) => { if(e.target === $("#dupModalBackdrop")) showDupModal(false); });
+  window.addEventListener("keydown", (e) => {
+    if(e.key !== "Escape") return;
+    if($("#modalBackdrop").classList.contains("show")) showModal(false);
+    if($("#dupModalBackdrop").classList.contains("show")) showDupModal(false);
+  });
 
   $("#btnSave").addEventListener("click", async () => {
     const schema = SCHEMA[activeTab];
@@ -2095,6 +2416,7 @@
     $("#pbEmail").value = "";
     $("#pbPass").value = "";
     setLoggedInUI(false);
+    showDupModal(false);
     records = [];
     selectedSetForTab(activeTab).clear();
     tablePagingStateForTab(activeTab).page = 1;
