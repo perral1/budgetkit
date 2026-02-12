@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Admin — Accounts • Assets • Categories</title>
+  <title>Admin — Accounts • Assets • Categories • Payees</title>
   <style>
     :root{
       --bg:#0b0f14; --panel:#0f1620; --panel2:#121c29; --text:#e7edf6; --muted:#a9b7c8;
@@ -184,7 +184,7 @@
   <div class="wrap">
     <div class="topbar">
       <div class="title">
-        <h1>Manage: Accounts • Assets • Categories</h1>
+        <h1>Manage: Accounts • Assets • Categories • Payees</h1>
         <a href="#" id="logoutLink" style="display:none; font-size:12px; color:var(--muted); margin-left:8px;">logout</a>
       </div>
 
@@ -212,6 +212,7 @@
       <button class="tab active" data-tab="accounts" role="tab" aria-selected="true">Accounts</button>
       <button class="tab" data-tab="assets" role="tab" aria-selected="false">Assets</button>
       <button class="tab" data-tab="categories" role="tab" aria-selected="false">Categories</button>
+      <button class="tab" data-tab="payees" role="tab" aria-selected="false">Payees</button>
     </div>
 
     <section class="panel" id="panel">
@@ -264,7 +265,7 @@
     </section>
 
     <div class="footNote">
-      Conforms to the Budget System schema: accounts, assets, categories fields and enums.
+      Conforms to the Budget System schema: accounts, assets, categories, and payees fields and enums.
     </div>
   </div>
 
@@ -394,11 +395,13 @@
           filterParts.push(`symbol ~ "${esc}" || name ~ "${esc}"`);
         } else if(collection === "categories"){
           filterParts.push(`name ~ "${esc}" || kind ~ "${esc}"`);
+        } else if(collection === "payees"){
+          filterParts.push(`name ~ "${esc}" || card_category ~ "${esc}"`);
         }
       }
 
       // archived flags are optional in many schemas; only apply when requested
-      if(includeArchivedFilter && (collection === "accounts" || collection === "categories")){
+      if(includeArchivedFilter && (collection === "accounts" || collection === "categories" || collection === "payees")){
         if(onlyArchived){
           filterParts.push(`is_archived = true`);
         } else if(!showArchived){
@@ -533,6 +536,27 @@
         { key:"is_archived", label:"Archived", pillBool:true },
         { key:"id", label:"ID", mono:true }
       ]
+    },
+    payees: {
+      label: "Payees",
+      help: [
+        "Schema: name (required, unique), card_category (optional), is_archived (bool).",
+        "Card category enum: restaurant, intlrest, grocery, airlines, hotel, rental, parking, toll, taxi."
+      ].join("\n"),
+      fields: [
+        { key:"name", label:"Name", type:"text", required:true, placeholder:"Jersey Mike" },
+        { key:"card_category", label:"Card Category", type:"select", required:false, options:[
+          "restaurant","intlrest","grocery","airlines","hotel","rental","parking","toll","taxi"
+        ]},
+        { key:"is_archived", label:"Archived", type:"bool", required:false }
+      ],
+      columns: [
+        { key:"name", label:"Name" },
+        { key:"card_category", label:"Card Category", pill:true },
+        { key:"txn_count", label:"Txns", render:"payeeTxnCount", mono:true },
+        { key:"is_archived", label:"Archived", pillBool:true },
+        { key:"id", label:"ID", mono:true }
+      ]
     }
   };
 
@@ -542,16 +566,19 @@
   let accountStats = new Map();
   let assetEntryCounts = new Map();
   let categoryEntryCounts = new Map();
+  let payeeTxnCounts = new Map();
   let editing = { mode:"new", id:null, data:null };
   const tableSort = {
     accounts: { key: "name", direction: "asc" },
     assets: { key: "symbol", direction: "asc" },
-    categories: { key: "name", direction: "asc" }
+    categories: { key: "name", direction: "asc" },
+    payees: { key: "name", direction: "asc" }
   };
   const tablePaging = {
     accounts: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
     assets: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
-    categories: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 }
+    categories: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
+    payees: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 }
   };
 
   function fmtBalance(n){
@@ -606,11 +633,29 @@
     return all;
   }
 
+  async function listAllTxnsForStats(){
+    const perPage = 500;
+    let page = 1;
+    let all = [];
+
+    while(true){
+      const data = await pbFetch(`/api/collections/${encodeURIComponent("txns")}/records?page=${page}&perPage=${perPage}`, { method:"GET" });
+      const items = data?.items || [];
+      all = all.concat(items);
+      const totalPages = Number(data?.totalPages || 1);
+      if(page >= totalPages) break;
+      page += 1;
+    }
+
+    return all;
+  }
+
   async function computeEntryStats(){
     const accountMap = new Map();
     const assetMap = new Map();
     const categoryMap = new Map();
-    const [entries, assets] = await Promise.all([listAllEntriesForStats(), listAllAssetsForStats()]);
+    const payeeMap = new Map();
+    const [entries, assets, txns] = await Promise.all([listAllEntriesForStats(), listAllAssetsForStats(), listAllTxnsForStats()]);
     const precisionByAssetId = new Map(assets.map(a => [String(a?.id || ""), normalizePrecision(a?.precision)]));
 
     entries.forEach(e => {
@@ -642,13 +687,20 @@
       }
     });
 
-    return { accountMap, assetMap, categoryMap };
+    txns.forEach((t) => {
+      const payeeId = String(t?.payee || "");
+      if(!payeeId) return;
+      payeeMap.set(payeeId, (payeeMap.get(payeeId) || 0) + 1);
+    });
+
+    return { accountMap, assetMap, categoryMap, payeeMap };
   }
 
   function entriesCountForRecord(tab, record){
     if(tab === "accounts") return (accountStats.get(record.id)?.entryCount || 0);
     if(tab === "assets") return (assetEntryCounts.get(record.id) || 0);
     if(tab === "categories") return (categoryEntryCounts.get(record.id) || 0);
+    if(tab === "payees") return (payeeTxnCounts.get(record.id) || 0);
     return 0;
   }
 
@@ -688,6 +740,7 @@
     if(column.render === "accountEntryCount") return false;
     if(column.render === "assetEntryCount") return false;
     if(column.render === "categoryEntryCount") return false;
+    if(column.render === "payeeTxnCount") return false;
     return true;
   }
 
@@ -733,6 +786,9 @@
     }
     if(column.render === "categoryEntryCount"){
       return Number(categoryEntryCounts.get(row.id) || 0);
+    }
+    if(column.render === "payeeTxnCount"){
+      return Number(payeeTxnCounts.get(row.id) || 0);
     }
     if(column.pillBool){
       return row[column.key] ? 1 : 0;
@@ -840,6 +896,8 @@
           td.textContent = String(assetEntryCounts.get(r.id) || 0);
         } else if(c.render === "categoryEntryCount"){
           td.textContent = String(categoryEntryCounts.get(r.id) || 0);
+        } else if(c.render === "payeeTxnCount"){
+          td.textContent = String(payeeTxnCounts.get(r.id) || 0);
         } else if(c.pillBool){
           const v = !!r[c.key];
           const span = document.createElement("span");
@@ -869,7 +927,7 @@
       btnEdit.addEventListener("click", () => openEditor("edit", r));
       wrap.appendChild(btnEdit);
 
-      if(activeTab === "accounts" || activeTab === "categories"){
+      if(activeTab === "accounts" || activeTab === "categories" || activeTab === "payees"){
         const btnArch = document.createElement("button");
         btnArch.className = "btn";
         btnArch.textContent = r.is_archived ? "Unarchive" : "Archive";
@@ -892,7 +950,8 @@
         btnDel.addEventListener("click", async () => {
           const linkedEntries = entriesCountForRecord(activeTab, r);
           if(linkedEntries > 0){
-            toast("bad", "Delete blocked", "Cannot delete while entries reference this record.");
+            const refLabel = activeTab === "payees" ? "transactions" : "entries";
+            toast("bad", "Delete blocked", "Cannot delete while " + refLabel + " reference this record.");
             return;
           }
           try{
@@ -1069,7 +1128,7 @@
 
     if("meta" in out && out.meta === null) delete out.meta;
     if(activeTab === "categories" && out.parent === null) delete out.parent;
-    ["institution","name","symbol"].forEach(k => { if(out[k] === null) delete out[k]; });
+    ["institution","name","symbol","card_category"].forEach(k => { if(out[k] === null) delete out[k]; });
 
     return out;
   }
@@ -1084,6 +1143,7 @@
       accountStats = new Map();
       assetEntryCounts = new Map();
       categoryEntryCounts = new Map();
+      payeeTxnCounts = new Map();
 
       const catsAllRes = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false, page:1, perPage:500 });
       categoriesIndex = new Map((catsAllRes.items || []).map(c => [c.id, c]));
@@ -1097,6 +1157,7 @@
       accountStats = stats.accountMap;
       assetEntryCounts = stats.assetMap;
       categoryEntryCounts = stats.categoryMap;
+      payeeTxnCounts = stats.payeeMap;
 
       const paging = tablePagingStateForTab(activeTab);
       let listRes = await listRecords(activeTab, {

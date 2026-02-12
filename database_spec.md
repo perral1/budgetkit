@@ -72,14 +72,28 @@ Indexes:
 - `kind`
 - `is_archived`
 
-### 2.4 `txns`
+### 2.4 `payees`
+
+Canonical payee directory for transaction headers.
+
+Fields:
+- `name` (text, required, unique)
+- `card_category` (select, optional): `restaurant | intlrest | grocery | airlines | hotel | rental | parking | toll | taxi`
+- `is_archived` (bool, default `false`)
+
+Indexes:
+- unique `name`
+- `card_category`
+- `is_archived`
+
+### 2.5 `txns`
 
 Transaction header that groups one or more entries.
 
 Fields:
 - `date` (datetime, required; normalized to `12:00:00Z`)
 - `memo` (text, optional)
-- `payee` (text, optional)
+- `payee` (relation -> `payees`, optional)
 - `source` (text, optional, e.g. `manual`, `import:schwab`)
 - `external_id` (text, optional; import idempotency)
 - `meta` (json)
@@ -88,7 +102,7 @@ Indexes:
 - `date`
 - unique `external_id` (recommended; may include source prefix)
 
-### 2.5 `entries`
+### 2.6 `entries`
 
 Primary economic-effect table.
 
@@ -110,7 +124,7 @@ Indexes (critical):
 - composite (`status`, `date`)
 - (`txn`)
 
-### 2.6 `budget_lines`
+### 2.7 `budget_lines`
 
 Monthly envelope assignments by category.
 
@@ -131,7 +145,7 @@ Notes:
 - There is no separate budget-period table.
 - Carryover is derived from history and not persisted.
 
-### 2.7 `v_activity_by_category_month` (view)
+### 2.8 `v_activity_by_category_month` (view)
 
 Server-side monthly activity aggregation by category name.
 

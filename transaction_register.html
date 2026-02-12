@@ -382,6 +382,8 @@
         assetPrecisionById: new Map(),
         categories: [],
         categoryById: new Map(),
+        payees: [],
+        payeeById: new Map(),
         txns: new Map(),
         entries: [],
         selectedTxnIds: [],
@@ -696,10 +698,11 @@
       }
 
       async function loadReferenceData() {
-        const [accounts, assets, categories] = await Promise.all([
+        const [accounts, assets, categories, payees] = await Promise.all([
           listRecordsSafe("accounts", { filter: "is_archived = false", sort: "name", perPage: 500 }),
           listRecordsSafe("assets", { sort: "symbol", perPage: 500 }),
-          listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 500 })
+          listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 500 }),
+          listRecordsSafe("payees", { filter: "is_archived = false", sort: "name", perPage: 500 })
         ]);
         state.accounts = accounts;
         state.accountById = new Map(state.accounts.map((a) => [String(a.id), a]));
@@ -707,6 +710,8 @@
         state.assetPrecisionById = new Map(state.assets.map((a) => [String(a.id), normalizePrecision(a.precision)]));
         state.categories = categories;
         state.categoryById = new Map(state.categories.map((c) => [String(c.id), c]));
+        state.payees = payees;
+        state.payeeById = new Map(state.payees.map((p) => [String(p.id), p]));
 
         refillFilterSelect("#fltAccount", state.accounts, "(all accounts)", (a) => accountLabel(a, false));
         refillFilterSelect("#fltCategory", state.categories, "(all categories)", (c) => categoryLabel(c, false));
@@ -744,6 +749,7 @@
         state.entries = filtered;
         state.txns = new Map();
         await backfillMissingLinkedTxns(state.entries);
+        await ensurePayeesLoaded(Array.from(state.txns.values()).map((t) => t && t.payee));
 
         renderRegister();
       }
@@ -791,6 +797,13 @@
         return base + " [" + kind + "]" + archivedTag;
       }
 
+      function payeeLabel(payee, includeArchivedTag) {
+        const base = (payee && (payee.name || payee.id)) || "";
+        const card = payee && payee.card_category ? " {" + payee.card_category + "}" : "";
+        const archivedTag = includeArchivedTag && payee && payee.is_archived ? " [archived]" : "";
+        return base + card + archivedTag;
+      }
+
       function getAccountById(accountId) {
         return state.accountById.get(String(accountId || "")) || null;
       }
@@ -807,6 +820,15 @@
       function categoryDisplayName(categoryId) {
         const c = getCategoryById(categoryId);
         return (c && (c.name || c.id)) || String(categoryId || "");
+      }
+
+      function getPayeeById(payeeId) {
+        return state.payeeById.get(String(payeeId || "")) || null;
+      }
+
+      function payeeDisplayName(payeeId) {
+        const p = getPayeeById(payeeId);
+        return (p && (p.name || p.id)) || String(payeeId || "");
       }
 
       function getEntryAssetId(entry) {
@@ -834,6 +856,15 @@
         const selected = getCategoryById(selectedId);
         if (!selected) return state.categories.slice();
         return state.categories.concat([selected]);
+      }
+
+      function editablePayeeOptions(selectedPayeeId) {
+        const selectedId = String(selectedPayeeId || "");
+        if (!selectedId) return state.payees.slice();
+        if (state.payees.some((p) => String(p.id) === selectedId)) return state.payees.slice();
+        const selected = getPayeeById(selectedId);
+        if (!selected) return state.payees.slice();
+        return state.payees.concat([selected]);
       }
 
       async function ensureAccountsLoaded(accountIds) {
@@ -880,6 +911,30 @@
           }));
           rows.forEach((category) => {
             if (category && category.id) state.categoryById.set(String(category.id), category);
+          });
+        }
+      }
+
+      async function ensurePayeesLoaded(payeeIds) {
+        const missingIds = Array.from(new Set(
+          (payeeIds || [])
+            .map((id) => String(id || ""))
+            .filter((id) => id && !state.payeeById.has(id))
+        ));
+        if (!missingIds.length) return;
+
+        const batchSize = 25;
+        for (let i = 0; i < missingIds.length; i += batchSize) {
+          const batch = missingIds.slice(i, i + batchSize);
+          const rows = await Promise.all(batch.map(async (payeeId) => {
+            try {
+              return await getRecord("payees", payeeId);
+            } catch {
+              return null;
+            }
+          }));
+          rows.forEach((payee) => {
+            if (payee && payee.id) state.payeeById.set(String(payee.id), payee);
           });
         }
       }
@@ -1147,7 +1202,7 @@
           if ((group || []).length <= 1) return accountDisplayName(group[0] && group[0].account);
           return summarizeGroupText(group, (e) => accountDisplayName(e && e.account));
         }
-        if (column === "payee") return txn.payee || "";
+        if (column === "payee") return payeeDisplayName(txn.payee);
         if (column === "category") {
           if ((group || []).length <= 1) return categoryDisplayName(group[0] && group[0].category);
           return summarizeGroupText(group, (e) => categoryDisplayName(e && e.category));
@@ -1260,7 +1315,7 @@
       function applyPendingInlineFocus() {
         if (!state.editingTxnId || !state.pendingFocusKey) return;
         const key = state.pendingFocusKey;
-        const selector = (key === "entry-account" || key === "entry-category")
+        const selector = (key === "entry-account" || key === "entry-category" || key === "txn-payee")
           ? '[data-lookup-for="' + key + '"]'
           : '[data-edit="' + key + '"]';
         requestAnimationFrame(function() {
@@ -1288,7 +1343,7 @@
           state.loading = true;
           setBusy();
 
-          if (!state.accounts.length || !state.assets.length || !state.categories.length) {
+          if (!state.accounts.length || !state.assets.length || !state.categories.length || !state.payees.length) {
             await loadReferenceData();
           }
 
@@ -1363,6 +1418,7 @@
           });
           await ensureAccountsLoaded(entries.map((e) => e && e.account));
           await ensureCategoriesLoaded(entries.map((e) => e && e.category));
+          await ensurePayeesLoaded([txn && txn.payee]);
           state.editingTxnId = txnId;
           state.selectedTxnIds = [txnId];
           state.selectionAnchorTxnId = txnId;
@@ -1558,7 +1614,7 @@
               trSingle.innerHTML = [
                 '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date || e.date)) + '" /></td>',
                 '<td>' + inlineLookupMarkup(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), "entry-account", false, "Select account") + "</td>",
-                '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
+                '<td>' + inlineLookupMarkup(editablePayeeOptions(draftTxn.payee), draftTxn.payee, (p) => payeeLabel(p, true), "txn-payee", true, "Optional payee") + "</td>",
                 '<td>' + inlineLookupMarkup(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), "entry-category", true, "Optional category") + "</td>",
                 '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
                 '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
@@ -1574,7 +1630,7 @@
             trTxn.innerHTML = [
               '<td><input class="inlineInput" data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(fmtDate(draftTxn.date)) + '" /></td>',
               "<td></td>",
-              '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
+              '<td>' + inlineLookupMarkup(editablePayeeOptions(draftTxn.payee), draftTxn.payee, (p) => payeeLabel(p, true), "txn-payee", true, "Optional payee") + "</td>",
               "<td></td>",
               '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
               "<td></td>",
@@ -1616,7 +1672,7 @@
             tr.innerHTML = [
               "<td>" + escapeHtml(fmtDate(e.date)) + "</td>",
               "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
-              "<td>" + escapeHtml(txn.payee || "") + "</td>",
+              "<td>" + escapeHtml(payeeDisplayName(txn.payee)) + "</td>",
               "<td><span class=\"pill\">" + escapeHtml(categoryDisplayName(e.category)) + "</span></td>",
               "<td>" + escapeHtml(txn.memo || "") + "</td>",
               "<td>" + escapeHtml(qtyTxt) + "</td>",
@@ -1644,7 +1700,7 @@
           parentRow.innerHTML = [
             "<td>" + escapeHtml(fmtDate(txn.date || group[0].date)) + "</td>",
             "<td></td>",
-            "<td>" + escapeHtml(txn.payee || "") + "</td>",
+            "<td>" + escapeHtml(payeeDisplayName(txn.payee)) + "</td>",
             "<td></td>",
             "<td>" + escapeHtml(txn.memo || "") + "</td>",
             "<td>" + escapeHtml(totalTxt) + "</td>",
@@ -1736,7 +1792,7 @@
 
           await loadRegister();
 
-          setStatus("ok", "Loaded accounts/assets/categories and register entries.");
+          setStatus("ok", "Loaded accounts/assets/categories/payees and register entries.");
         } catch (err) {
           const info = classifyError(err);
           setStatus(info.kind, "Load failed: " + (err && err.message ? err.message : info.message));
@@ -1822,6 +1878,8 @@
         state.assetPrecisionById = new Map();
         state.categories = [];
         state.categoryById = new Map();
+        state.payees = [];
+        state.payeeById = new Map();
         state.txns = new Map();
         state.selectedTxnIds = [];
         state.selectionAnchorTxnId = "";

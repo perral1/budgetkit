@@ -198,7 +198,7 @@
           <button class="btn primary" id="btnImport" type="button" disabled>Import CSV</button>
         </div>
         <div class="help" style="margin-top:8px;">
-          Expected headers: Date, Account, Payee, Category, Subcategory, Memo, Amount. Optional header: Cleared (`TRUE` = cleared, `FALSE` = pending). If Cleared is missing, status defaults to `cleared`. All rows import with asset `USD`.
+          Expected headers: Date, Account, Payee, Category, Subcategory, Memo, Amount. Optional header: Cleared (`TRUE` = cleared, `FALSE` = pending). If Cleared is missing, status defaults to `cleared`. Payee values ending with a supported card category suffix (for example `Jersey Mike Restaurant`) are split into payee name + card category. All rows import with asset `USD`.
         </div>
         <div class="mono" id="fileInfo" style="margin-top:8px;">No file loaded.</div>
       </section>
@@ -251,9 +251,12 @@
         refs: {
           accountsByName: new Map(),
           categoriesByName: new Map(),
-          assetsBySymbol: new Map()
+          assetsBySymbol: new Map(),
+          payeesByName: new Map()
         }
       };
+
+      const PAYEE_CARD_CATEGORIES = ["restaurant", "intlrest", "grocery", "airlines", "hotel", "rental", "parking", "toll", "taxi"];
 
       function setStatus(kind, message) {
         const box = $("#statusBox");
@@ -345,6 +348,13 @@
       async function createRecord(collection, body) {
         return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records", {
           method: "POST",
+          body: JSON.stringify(body)
+        });
+      }
+
+      async function updateRecord(collection, id, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "PATCH",
           body: JSON.stringify(body)
         });
       }
@@ -471,6 +481,17 @@
         return null;
       }
 
+      function splitPayeeAndCardCategory(rawPayee) {
+        const raw = String(rawPayee || "").trim().replace(/\s+/g, " ");
+        if (!raw) return { name: "", cardCategory: null };
+        const parts = raw.split(" ");
+        const tail = String(parts[parts.length - 1] || "").toLowerCase();
+        if (PAYEE_CARD_CATEGORIES.includes(tail) && parts.length > 1) {
+          return { name: parts.slice(0, -1).join(" ").trim(), cardCategory: tail };
+        }
+        return { name: raw, cardCategory: null };
+      }
+
       function categoryKindFromName(name, qty) {
         const n = String(name || "").trim().toLowerCase();
         const lead = n.includes(":") ? n.slice(0, n.indexOf(":")).trim() : n;
@@ -581,7 +602,8 @@
 
           const date = normalizeDateInput(line[idx.date]);
           const account = String(line[idx.account] || "").trim();
-          const payee = idx.payee >= 0 ? String(line[idx.payee] || "").trim() : "";
+          const payeeRaw = idx.payee >= 0 ? String(line[idx.payee] || "").trim() : "";
+          const parsedPayee = splitPayeeAndCardCategory(payeeRaw);
           const category = String(line[idx.category] || "").trim();
           const subcategory = idx.subcategory >= 0 ? String(line[idx.subcategory] || "").trim() : "";
           const memo = idx.memo >= 0 ? String(line[idx.memo] || "").trim() : "";
@@ -597,7 +619,9 @@
             lineNo: r + 1,
             date: date,
             account: account,
-            payee: payee,
+            payeeRaw: payeeRaw,
+            payeeName: parsedPayee.name,
+            payeeCardCategory: parsedPayee.cardCategory,
             category: category,
             subcategory: subcategory,
             memo: memo,
@@ -620,7 +644,7 @@
             "<td>" + r.lineNo + "</td>" +
             "<td>" + escapeHtml(r.date) + "</td>" +
             "<td>" + escapeHtml(r.account) + "</td>" +
-            "<td>" + escapeHtml(r.payee) + "</td>" +
+            "<td>" + escapeHtml(r.payeeName + (r.payeeCardCategory ? (" {" + r.payeeCardCategory + "}") : "")) + "</td>" +
             "<td>" + escapeHtml(r.category) + "</td>" +
             "<td>" + escapeHtml(r.subcategory) + "</td>" +
             "<td>" + escapeHtml(fmtMinor(r.amountMinor, state.usdPrecision)) + "</td>" +
@@ -663,6 +687,17 @@
         return msg.includes("invalid value") || msg.includes(String(badValue || "").toLowerCase());
       }
 
+      function hasDuplicateNameError(err, fieldName) {
+        if (!err || err.status !== 400) return false;
+        const top = String(err.message || "").toLowerCase();
+        if (top.includes("already exists")) return true;
+        const data = err.responseData && err.responseData.data ? err.responseData.data : null;
+        const field = data && fieldName ? data[fieldName] : null;
+        if (!field) return false;
+        const msg = String(field.message || "").toLowerCase();
+        return msg.includes("already exists") || msg.includes("must be unique") || msg.includes("duplicate");
+      }
+
       function pushLog(kind, msg) {
         const box = $("#logBox");
         const div = document.createElement("div");
@@ -699,15 +734,17 @@
       }
 
       async function loadReferenceData() {
-        const [accounts, categories, assets] = await Promise.all([
+        const [accounts, categories, assets, payees] = await Promise.all([
           listRecordsSafe("accounts", { sort: "name", perPage: 500 }),
           listRecordsSafe("categories", { sort: "name", perPage: 500 }),
-          listRecordsSafe("assets", { sort: "symbol", perPage: 200 })
+          listRecordsSafe("assets", { sort: "symbol", perPage: 200 }),
+          listRecordsSafe("payees", { sort: "name", perPage: 500 })
         ]);
 
         state.refs.accountsByName = indexByName(accounts);
         state.refs.categoriesByName = indexByName(categories);
         state.refs.assetsBySymbol = new Map(assets.map((a) => [String(a.symbol || "").toUpperCase(), a]));
+        state.refs.payeesByName = indexByName(payees);
       }
 
       async function ensureUsdAsset() {
@@ -774,6 +811,65 @@
         return created;
       }
 
+      function normalizeCardCategory(value) {
+        const raw = String(value || "").trim().toLowerCase();
+        return raw || null;
+      }
+
+      async function reconcilePayeeCardCategory(found, name, cardCategory) {
+        const incomingCategory = normalizeCardCategory(cardCategory);
+        const existingCategory = normalizeCardCategory(found && found.card_category);
+
+        if (!incomingCategory) return found;
+
+        if (!existingCategory) {
+          const updated = await updateRecord("payees", found.id, { card_category: incomingCategory });
+          state.refs.payeesByName.set(keyOfName(name), updated);
+          pushLog("ok", "Updated payee card category: " + name + " {" + incomingCategory + "} (" + updated.id + ").");
+          return updated;
+        }
+
+        if (existingCategory !== incomingCategory) {
+          const err = new Error(
+            "Payee card category conflict for '" + name + "': existing {" + existingCategory + "} vs incoming {" + incomingCategory + "}."
+          );
+          err.isPayeeCardCategoryConflict = true;
+          throw err;
+        }
+
+        return found;
+      }
+
+      async function ensurePayee(name, cardCategory) {
+        const key = keyOfName(name);
+        if (!key) return null;
+        const found = state.refs.payeesByName.get(key);
+        if (found) return await reconcilePayeeCardCategory(found, name, cardCategory);
+
+        try {
+          const created = await createRecord("payees", {
+            name: name,
+            card_category: cardCategory || null,
+            is_archived: false
+          });
+
+          state.refs.payeesByName.set(key, created);
+          pushLog("ok", "Created payee: " + name + (cardCategory ? (" {" + cardCategory + "}") : "") + " (" + created.id + ").");
+          return created;
+        } catch (err) {
+          if (!hasDuplicateNameError(err, "name")) throw err;
+          const payees = await listRecordsSafe("payees", { sort: "name", perPage: 500 });
+          state.refs.payeesByName = indexByName(payees);
+          const existing = state.refs.payeesByName.get(key);
+          if (existing) {
+            const reconciled = await reconcilePayeeCardCategory(existing, name, cardCategory);
+            pushLog("warn", "Reused existing payee after unique-name conflict: " + name + " (" + reconciled.id + ").");
+            return reconciled;
+          }
+          throw err;
+        }
+      }
+
       function buildExternalId(fileName, row) {
         const core = [fileName, row.lineNo, row.date, row.account, row.category, row.amountMinor].join("|");
         return "import:csv:" + core;
@@ -826,6 +922,7 @@
         let createdEntries = 0;
         let createdAccounts = 0;
         let createdCategories = 0;
+        let createdPayees = 0;
         let pairedTxns = 0;
         let skipped = 0;
         let failed = 0;
@@ -860,7 +957,9 @@
                   category: row.category,
                   amount: row.amountMinor,
                   status: row.status,
-                  payee: row.payee,
+                  payeeRaw: row.payeeRaw,
+                  payeeName: row.payeeName,
+                  payeeCardCategory: row.payeeCardCategory,
                   subcategory: row.subcategory,
                   memo: row.memo
                 }));
@@ -890,9 +989,17 @@
                 groupCategories.push(category);
               }
 
+              const primaryPayee = groupRows.find((r) => r.payeeName) || null;
+              let payeeRecord = null;
+              if (primaryPayee) {
+                const hadPayee = state.refs.payeesByName.has(keyOfName(primaryPayee.payeeName));
+                payeeRecord = await ensurePayee(primaryPayee.payeeName, primaryPayee.payeeCardCategory);
+                if (!hadPayee && payeeRecord) createdPayees += 1;
+              }
+
               const txnBody = {
                 date: normalizeDateToNoonUtc(groupRows[0].date),
-                payee: groupRows[0].payee || groupRows[1]?.payee || null,
+                payee: payeeRecord ? payeeRecord.id : null,
                 memo: groupRows[0].memo || groupRows[1]?.memo || null,
                 source: "import:csv"
               };
@@ -951,6 +1058,10 @@
                 $("#importStats").textContent = "Processed " + processedRows + " / " + state.parsedRows.length + " rows...";
               }
             } catch (rowErr) {
+              if (rowErr && rowErr.isPayeeCardCategoryConflict) {
+                pushLog("bad", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " failed: " + rowErr.message);
+                throw rowErr;
+              }
               failed += groupRows.length;
               processedRows += groupRows.length;
               pushLog("bad", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " failed: " + (rowErr && rowErr.message ? rowErr.message : String(rowErr)));
@@ -965,6 +1076,7 @@
             "Paired transfers: " + pairedTxns,
             "Accounts created: " + createdAccounts,
             "Categories created: " + createdCategories,
+            "Payees created: " + createdPayees,
             "Skipped: " + skipped,
             "Failed: " + failed
           ].join(" ");
@@ -1006,7 +1118,9 @@
             category: badRow.category,
             amount: badRow.amountMinor,
             status: badRow.status,
-            payee: badRow.payee,
+            payeeRaw: badRow.payeeRaw,
+            payeeName: badRow.payeeName,
+            payeeCardCategory: badRow.payeeCardCategory,
             subcategory: badRow.subcategory,
             memo: badRow.memo
           };
