@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BudgetKit - Collection Bulk Delete</title>
+  <style>
+    :root {
+      --bg: #081019;
+      --panel: #101c2b;
+      --panel2: #122338;
+      --text: #e6edf7;
+      --muted: #a7b7cc;
+      --line: #2a3f5a;
+      --accent: #7bd0ff;
+      --warn: #ffd987;
+      --bad: #ff8f8f;
+      --ok: #8be5b4;
+      --radius: 12px;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background: radial-gradient(circle at top left, #11243a 0%, #081019 55%, #050a11 100%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 16px; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(16, 28, 43, 0.92);
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    h1 { margin: 0; font-size: 18px; }
+    .sub { margin-top: 4px; font-size: 12px; color: var(--muted); }
+    .auth { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    label { font-size: 12px; color: var(--muted); }
+    input[type="text"], input[type="password"], select {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(18, 35, 56, 0.95);
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+      min-width: 150px;
+    }
+    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(123, 208, 255, 0.15); }
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(18, 35, 56, 0.95);
+      color: var(--text);
+      padding: 8px 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { border-color: rgba(123, 208, 255, 0.65); background: rgba(123, 208, 255, 0.16); }
+    .btn.danger { border-color: rgba(255, 143, 143, 0.65); background: rgba(255, 143, 143, 0.16); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(12, 20, 32, 0.82);
+      color: var(--muted);
+      padding: 10px 11px;
+      font-size: 13px;
+    }
+    .status.ok { border-color: rgba(139, 229, 180, 0.45); color: #ccf8e0; }
+    .status.warn { border-color: rgba(255, 217, 135, 0.45); color: #ffecc0; }
+    .status.bad { border-color: rgba(255, 143, 143, 0.45); color: #ffd5d5; }
+    .logout {
+      display: none;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+    #app { display: none; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 10px; }
+    .dangerBox {
+      border: 1px solid rgba(255, 143, 143, 0.35);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(255, 143, 143, 0.08);
+    }
+    .dangerTitle { margin: 0 0 6px; color: #ffd1d1; font-size: 13px; font-weight: 700; }
+    .hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    @media (max-width: 760px) {
+      .auth .field { min-width: 100%; }
+      .auth input[type="text"], .auth input[type="password"] { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="panel">
+      <div class="topbar">
+        <div>
+          <h1>Collection Bulk Delete <a id="logoutLink" class="logout" href="#">logout</a></h1>
+          <div class="sub">Delete all records from a selected PocketBase collection.</div>
+        </div>
+        <div id="authPanel" class="auth">
+          <div class="field">
+            <label for="pbUrl">URL</label>
+            <input id="pbUrl" type="text" placeholder="http://127.0.0.1:8090" />
+          </div>
+          <div class="field">
+            <label for="pbEmail">Email</label>
+            <input id="pbEmail" type="text" placeholder="you@example.com" />
+          </div>
+          <div class="field">
+            <label for="pbPass">Password</label>
+            <input id="pbPass" type="password" placeholder="password" />
+          </div>
+          <button id="btnLogin" class="btn primary" type="button">Login</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="statusBox" class="status">Not authenticated.</div>
+
+    <section id="app" class="panel">
+      <div class="row">
+        <div class="field">
+          <label for="collectionSelect">Collection</label>
+          <select id="collectionSelect"></select>
+        </div>
+        <button id="btnReloadCollections" class="btn" type="button">Reload collections</button>
+        <button id="btnInspect" class="btn" type="button">Inspect selected</button>
+      </div>
+
+      <div class="row">
+        <div class="field" style="min-width:280px;">
+          <label for="collectionManual">Manual collection override (optional)</label>
+          <input id="collectionManual" type="text" placeholder="e.g. entries" />
+        </div>
+      </div>
+
+      <div class="dangerBox">
+        <p class="dangerTitle">Danger zone: irreversible delete</p>
+        <p class="hint">This removes every row the logged-in user can delete from the target collection. Views and protected collections may fail with query/auth errors.</p>
+        <div class="row" style="margin-top:8px; margin-bottom:0;">
+          <div class="field" style="min-width:280px;">
+            <label for="confirmText">Type the collection name to enable delete</label>
+            <input id="confirmText" type="text" placeholder="collection name" />
+          </div>
+          <button id="btnDeleteAll" class="btn danger" type="button" disabled>Delete all rows</button>
+        </div>
+      </div>
+
+      <p id="inspectInfo" class="mono" style="margin-top:10px; margin-bottom:0;">Collection details not loaded.</p>
+    </section>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (sel) => document.querySelector(sel);
+
+  const store = {
+    get(key, fallback = null){
+      try {
+        const v = localStorage.getItem(key);
+        return v === null ? fallback : v;
+      } catch {
+        return fallback;
+      }
+    },
+    set(key, value){
+      try { localStorage.setItem(key, value); } catch {}
+    },
+    del(key){
+      try { localStorage.removeItem(key); } catch {}
+    }
+  };
+
+  const SESSION = { base: "", token: "" };
+  const state = { collections: [], busy: false };
+
+  function setStatus(message, kind){
+    const box = $("#statusBox");
+    box.textContent = message;
+    box.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function setLoggedInUI(isLoggedIn){
+    $("#authPanel").style.display = isLoggedIn ? "none" : "flex";
+    $("#logoutLink").style.display = isLoggedIn ? "inline" : "none";
+    $("#app").style.display = isLoggedIn ? "block" : "none";
+  }
+
+  function getTargetCollection(){
+    const manual = ($("#collectionManual").value || "").trim();
+    if(manual) return manual;
+    return ($("#collectionSelect").value || "").trim();
+  }
+
+  function updateDeleteButtonState(){
+    const target = getTargetCollection();
+    const confirm = ($("#confirmText").value || "").trim();
+    $("#btnDeleteAll").disabled = state.busy || !target || confirm !== target;
+  }
+
+  function setBusy(isBusy){
+    state.busy = !!isBusy;
+    $("#btnLogin").disabled = isBusy;
+    $("#btnReloadCollections").disabled = isBusy;
+    $("#btnInspect").disabled = isBusy;
+    $("#collectionSelect").disabled = isBusy;
+    $("#collectionManual").disabled = isBusy;
+    $("#confirmText").disabled = isBusy;
+    updateDeleteButtonState();
+  }
+
+  async function pbFetch(path, opts = {}){
+    if(!SESSION.base) throw new Error("PocketBase URL is required.");
+
+    const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    if(SESSION.token){
+      const t = /^Bearer\s+/i.test(SESSION.token) ? SESSION.token : ("Bearer " + SESSION.token);
+      headers.Authorization = t;
+    }
+
+    let res;
+    try {
+      res = await fetch(SESSION.base + path, Object.assign({}, opts, { headers }));
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      throw new Error("Network error (fetch failed): " + msg + ". Check PocketBase URL, CORS, and http/https.");
+    }
+
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+    if(!res.ok){
+      const details = (data && (data.message || data.error || data.data)) ? JSON.stringify(data) : (text || res.statusText);
+      if(res.status === 401 || res.status === 403){
+        throw new Error("Auth error (HTTP " + res.status + "): " + details);
+      }
+      if(res.status === 400){
+        throw new Error("Query/schema error (HTTP 400): " + details);
+      }
+      throw new Error("HTTP " + res.status + ": " + details);
+    }
+
+    return data;
+  }
+
+  async function pbAuthWithPassword(email, password){
+    return pbFetch("/api/collections/" + encodeURIComponent("users") + "/auth-with-password", {
+      method: "POST",
+      body: JSON.stringify({ identity: email, password })
+    });
+  }
+
+  async function pbAuthRefresh(){
+    return pbFetch("/api/collections/" + encodeURIComponent("users") + "/auth-refresh", { method: "POST" });
+  }
+
+  async function validateCachedSession(){
+    if(!SESSION.base || !SESSION.token) return false;
+    try {
+      const res = await pbAuthRefresh();
+      if(res && res.token){
+        SESSION.token = res.token;
+        store.set("pbToken", res.token);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function renderCollectionOptions(){
+    const select = $("#collectionSelect");
+    select.innerHTML = "";
+
+    if(!state.collections.length){
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "(none loaded; use manual override)";
+      select.appendChild(opt);
+      updateDeleteButtonState();
+      return;
+    }
+
+    state.collections.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+
+    updateDeleteButtonState();
+  }
+
+  async function loadCollections(){
+    async function tryList(includeSort){
+      const sortParam = includeSort ? "&sort=name" : "";
+      const data = await pbFetch("/api/collections?page=1&perPage=500" + sortParam, { method: "GET" });
+      const items = Array.isArray(data) ? data : (Array.isArray(data && data.items) ? data.items : []);
+      return items
+        .filter((c) => c && c.name && (c.type === "base" || c.type === "auth"))
+        .map((c) => String(c.name));
+    }
+
+    try {
+      let names;
+      try {
+        names = await tryList(true);
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        if(msg.startsWith("Query/schema error (HTTP 400):")){
+          names = await tryList(false);
+          setStatus("Collections loaded with fallback (without sort).", "warn");
+        } else {
+          throw e;
+        }
+      }
+      names.sort((a, b) => a.localeCompare(b));
+      state.collections = names;
+      renderCollectionOptions();
+      if(!names.length){
+        setStatus("No base/auth collections discovered. You can still use manual collection override.", "warn");
+      } else {
+        setStatus("Collections loaded.", "ok");
+      }
+    } catch (e) {
+      state.collections = [];
+      renderCollectionOptions();
+      setStatus((e && e.message ? e.message : String(e)) + " You can use manual collection override.", "warn");
+    }
+  }
+
+  async function listRecordsPage(collection, page, perPage){
+    async function tryList(mode){
+      let url = "/api/collections/" + encodeURIComponent(collection) + "/records?page=" + page + "&perPage=" + perPage;
+      if(mode >= 1) url += "&fields=id";
+      if(mode >= 2) url += "&sort=id";
+      const data = await pbFetch(url, { method: "GET" });
+      const items = Array.isArray(data && data.items) ? data.items : [];
+      return {
+        items,
+        totalItems: Number(data && data.totalItems ? data.totalItems : items.length)
+      };
+    }
+
+    try {
+      return await tryList(2);
+    } catch (e1) {
+      const m1 = String(e1 && e1.message ? e1.message : e1);
+      if(m1.startsWith("Query/schema error (HTTP 400):")){
+        try {
+          return await tryList(1);
+        } catch (e2) {
+          const m2 = String(e2 && e2.message ? e2.message : e2);
+          if(m2.startsWith("Query/schema error (HTTP 400):")){
+            return tryList(0);
+          }
+          throw e2;
+        }
+      }
+      throw e1;
+    }
+  }
+
+  async function inspectCollection(){
+    const collection = getTargetCollection();
+    if(!collection){
+      setStatus("Pick a collection or provide manual override.", "warn");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const page = await listRecordsPage(collection, 1, 1);
+      const total = Number.isFinite(page.totalItems) ? page.totalItems : page.items.length;
+      $("#inspectInfo").textContent = "Selected collection `" + collection + "` has " + total + " rows (by first-page metadata).";
+      setStatus("Inspect succeeded for collection `" + collection + "`.", "ok");
+    } catch (e) {
+      $("#inspectInfo").textContent = "Inspect failed for collection `" + collection + "`.";
+      setStatus(e && e.message ? e.message : String(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteBatch(collection, ids, progress){
+    const concurrency = 6;
+    let index = 0;
+
+    async function worker(){
+      while(index < ids.length){
+        const i = index;
+        index += 1;
+        const id = ids[i];
+        try {
+          await pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), { method: "DELETE" });
+          progress.deleted += 1;
+        } catch (e) {
+          progress.failed += 1;
+          if(!progress.firstError){
+            progress.firstError = e && e.message ? e.message : String(e);
+          }
+          const msg = String(e && e.message ? e.message : e);
+          if(msg.startsWith("Auth error")){
+            throw e;
+          }
+        }
+      }
+    }
+
+    const workers = [];
+    for(let i = 0; i < concurrency; i += 1){
+      workers.push(worker());
+    }
+    await Promise.all(workers);
+  }
+
+  async function deleteAllRows(){
+    const collection = getTargetCollection();
+    if(!collection){
+      setStatus("Pick a collection or provide manual override.", "warn");
+      return;
+    }
+
+    if(("" + ($("#confirmText").value || "").trim()) !== collection){
+      setStatus("Type the exact collection name to enable delete.", "warn");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete ALL rows from `" + collection + "`? This cannot be undone.");
+    if(!confirmed) return;
+
+    setBusy(true);
+    const progress = { deleted: 0, failed: 0, scanned: 0, firstError: "" };
+
+    try {
+      while(true){
+        const page = await listRecordsPage(collection, 1, 200);
+        const ids = page.items.map((r) => r && r.id).filter(Boolean);
+        progress.scanned += ids.length;
+
+        if(!ids.length){
+          break;
+        }
+
+        await deleteBatch(collection, ids, progress);
+        setStatus(
+          "Deleting `" + collection + "`: deleted=" + progress.deleted + ", failed=" + progress.failed + ", latest batch=" + ids.length + ".",
+          progress.failed ? "warn" : "ok"
+        );
+      }
+
+      if(progress.failed > 0){
+        setStatus(
+          "Completed with failures for `" + collection + "`. Deleted=" + progress.deleted + ", failed=" + progress.failed + ". First error: " + progress.firstError,
+          "warn"
+        );
+      } else {
+        setStatus("Delete completed for `" + collection + "`. Deleted " + progress.deleted + " rows.", "ok");
+      }
+
+      $("#inspectInfo").textContent = "Last run on `" + collection + "`: scanned " + progress.scanned + ", deleted " + progress.deleted + ", failed " + progress.failed + ".";
+    } catch (e) {
+      setStatus(e && e.message ? e.message : String(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  $("#btnLogin").addEventListener("click", async () => {
+    const base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+    const email = ($("#pbEmail").value || "").trim();
+    const password = $("#pbPass").value || "";
+
+    if(!base){
+      setStatus("Login: enter URL.", "warn");
+      return;
+    }
+    if(!email || !password){
+      setStatus("Login: enter email and password.", "warn");
+      return;
+    }
+
+    store.set("pbUrl", base);
+    store.set("pbEmail", email);
+
+    setBusy(true);
+    try {
+      SESSION.base = base;
+      SESSION.token = "";
+      const res = await pbAuthWithPassword(email, password);
+      if(!(res && res.token)) throw new Error("Login succeeded but no token was returned.");
+
+      SESSION.token = res.token;
+      store.set("pbToken", res.token);
+      setLoggedInUI(true);
+      setStatus("Login succeeded.", "ok");
+      await loadCollections();
+    } catch (e) {
+      SESSION.token = "";
+      store.del("pbToken");
+      setLoggedInUI(false);
+      setStatus(e && e.message ? e.message : String(e), "bad");
+    } finally {
+      setBusy(false);
+      $("#pbPass").value = "";
+    }
+  });
+
+  $("#logoutLink").addEventListener("click", (e) => {
+    e.preventDefault();
+    SESSION.base = "";
+    SESSION.token = "";
+    state.collections = [];
+
+    store.del("pbUrl");
+    store.del("pbEmail");
+    store.del("pbToken");
+
+    $("#pbUrl").value = "";
+    $("#pbEmail").value = "";
+    $("#pbPass").value = "";
+    $("#collectionManual").value = "";
+    $("#confirmText").value = "";
+    $("#inspectInfo").textContent = "Collection details not loaded.";
+
+    renderCollectionOptions();
+    setLoggedInUI(false);
+    setStatus("Logged out. Local session cleared.", "ok");
+  });
+
+  $("#btnReloadCollections").addEventListener("click", async () => {
+    setBusy(true);
+    try { await loadCollections(); }
+    finally { setBusy(false); }
+  });
+
+  $("#btnInspect").addEventListener("click", inspectCollection);
+  $("#btnDeleteAll").addEventListener("click", deleteAllRows);
+
+  $("#collectionSelect").addEventListener("change", () => {
+    updateDeleteButtonState();
+    $("#inspectInfo").textContent = "Collection details not loaded.";
+  });
+  $("#collectionManual").addEventListener("input", () => {
+    updateDeleteButtonState();
+    $("#inspectInfo").textContent = "Collection details not loaded.";
+  });
+  $("#confirmText").addEventListener("input", updateDeleteButtonState);
+
+  $("#pbUrl").value = store.get("pbUrl", "");
+  $("#pbEmail").value = store.get("pbEmail", "");
+  renderCollectionOptions();
+
+  (async () => {
+    SESSION.base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+    SESSION.token = (store.get("pbToken", "") || "").trim();
+
+    if(SESSION.base && SESSION.token){
+      const ok = await validateCachedSession();
+      if(ok){
+        setLoggedInUI(true);
+        setStatus("Session restored.", "ok");
+        setBusy(true);
+        try { await loadCollections(); }
+        finally { setBusy(false); }
+        return;
+      }
+      SESSION.token = "";
+      store.del("pbToken");
+    }
+
+    setLoggedInUI(false);
+    setStatus("Not authenticated.", "warn");
+  })();
+})();
+</script>
+</body>
+</html>

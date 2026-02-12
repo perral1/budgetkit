@@ -557,8 +557,19 @@
   function fmtBalance(n){
     const num = Number(n || 0);
     if(!Number.isFinite(num)) return "0";
-    const isIntLike = Math.abs(num - Math.round(num)) < 1e-9;
-    return isIntLike ? String(Math.round(num)) : num.toFixed(2);
+    return num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 });
+  }
+
+  function normalizePrecision(raw){
+    const n = Number(raw);
+    if(Number.isInteger(n) && n >= 0 && n <= 9) return n;
+    return 2;
+  }
+
+  function minorToMajor(minor, precision){
+    const n = Number(minor || 0);
+    if(!Number.isFinite(n) || !Number.isSafeInteger(n)) return 0;
+    return n / (10 ** precision);
   }
 
   async function listAllEntriesForStats(){
@@ -578,19 +589,39 @@
     return all;
   }
 
+  async function listAllAssetsForStats(){
+    const perPage = 500;
+    let page = 1;
+    let all = [];
+
+    while(true){
+      const data = await pbFetch(`/api/collections/${encodeURIComponent("assets")}/records?page=${page}&perPage=${perPage}`, { method:"GET" });
+      const items = data?.items || [];
+      all = all.concat(items);
+      const totalPages = Number(data?.totalPages || 1);
+      if(page >= totalPages) break;
+      page += 1;
+    }
+
+    return all;
+  }
+
   async function computeEntryStats(){
     const accountMap = new Map();
     const assetMap = new Map();
     const categoryMap = new Map();
-    const entries = await listAllEntriesForStats();
+    const [entries, assets] = await Promise.all([listAllEntriesForStats(), listAllAssetsForStats()]);
+    const precisionByAssetId = new Map(assets.map(a => [String(a?.id || ""), normalizePrecision(a?.precision)]));
 
     entries.forEach(e => {
       const accountId = e?.account;
       const assetId = e?.asset;
       const categoryId = e?.category;
       if(accountId){
-        const qty = Number(e?.qty || 0);
-        if(Number.isFinite(qty)){
+        const qtyMinor = Number(e?.qty || 0);
+        if(Number.isFinite(qtyMinor) && Number.isSafeInteger(qtyMinor)){
+          const precision = precisionByAssetId.get(String(assetId || "")) ?? 2;
+          const qty = minorToMajor(qtyMinor, precision);
           const status = String(e?.status || "").toLowerCase();
           const row = accountMap.get(accountId) || { current: 0, cleared: 0, entryCount: 0 };
           row.entryCount += 1;

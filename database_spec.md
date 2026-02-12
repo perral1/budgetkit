@@ -98,7 +98,7 @@ Fields:
 - `account` (relation -> `accounts`, required)
 - `category` (relation -> `categories`, optional but recommended)
 - `asset` (relation -> `assets`, required; default `USD`)
-- `qty` (number, required, signed)
+- `qty` (number, required, signed fixed-precision integer)
 - `memo` (text, optional)
 - `status` (select, required): `pending | cleared`
 - `meta` (json)
@@ -117,7 +117,7 @@ Monthly envelope assignments by category.
 Fields:
 - `month` (text, required, format `YYYY-MM`)
 - `category` (relation -> `categories`, required)
-- `budgeted` (number, required)
+- `budgeted` (number, required fixed-precision integer)
 - `note` (text, optional)
 - `meta` (json)
 
@@ -139,7 +139,7 @@ Required fields:
 - `id` (text, unique per category/month)
 - `category` (text; category name from `categories.name`)
 - `month` (text, format `YYYY-MM`)
-- `activity` (number; summed `entries.qty`)
+- `activity` (number; summed `entries.qty` fixed-precision integers)
 
 Reference view query:
 - Uses `entries` joined to `categories`
@@ -148,28 +148,36 @@ Reference view query:
 
 ## 3. Data Semantics (Required)
 
+### 3.0 Fixed-Precision Amount Storage
+- All persisted amounts are stored as signed integers in minor units.
+- Scale is determined by `assets.precision` for the related asset.
+- If `assets.precision` is null/blank/invalid, modules must default to precision `2`.
+- Inputs must not exceed the asset precision. Example: for `USD` precision `2`, `10.51` is valid and stored as `1051`, while `10.511` is invalid.
+- Modules must reject invalid amount input (manual entry/import) rather than silently rounding.
+- Display values must convert persisted minor units back to major units using the same precision.
+
 ### 3.1 Normal budget transaction
 - One `entries` row.
 - `category.kind` is `income` or `expense`.
 - `asset` is `USD`.
-- `qty` is signed (`+` income, `-` spending).
+- `qty` is signed (`+` income, `-` spending) and stored in minor units.
 
 ### 3.2 Transfers
 - One `txns` record.
 - Two entries.
-- Equal and opposite `qty`.
+- Equal and opposite `qty` (minor units).
 - `category.kind` is `transfer` (or `category` is null).
 
 ### 3.3 Trades
 - One `txns` record.
 - Trade cash leg: `trade_cash` in `USD`.
 - Trade asset leg: `trade_asset` in non-`USD` asset.
-- Optional fee leg: `fee` with negative `qty`.
+- Optional fee leg: `fee` with negative `qty` (minor units).
 - Legs usually reference the same brokerage account.
 
 ### 3.4 Paystubs
 - One `txns` record.
-- Net pay: `income` in checking account, `qty = +NET`.
+- Net pay: `income` in checking account, `qty = +NET` (minor units).
 - Transfers (e.g. 401k) are paired transfer entries.
 - Payroll detail rows are stored in a virtual account:
   - Gross: `info`, positive

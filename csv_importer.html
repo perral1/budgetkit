@@ -247,6 +247,7 @@
         file: null,
         parsedRows: [],
         importing: false,
+        usdPrecision: 2,
         refs: {
           accountsByName: new Map(),
           categoriesByName: new Map(),
@@ -421,13 +422,45 @@
         return d.toISOString().slice(0, 10);
       }
 
-      function parseAmount(raw) {
+      function normalizePrecision(raw) {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0 && n <= 9) return n;
+        return 2;
+      }
+
+      function parseMajorToMinor(raw, precision) {
         let s = String(raw == null ? "" : raw).trim();
-        if (!s) return null;
+        if (!s) throw new Error("Amount is required.");
         s = s.replaceAll("$", "").replaceAll(",", "").trim();
         if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
-        const n = Number(s);
-        return Number.isFinite(n) ? n : null;
+        if (!/^-?\d+(\.\d+)?$/.test(s)) throw new Error("Amount must be numeric.");
+
+        const neg = s.startsWith("-");
+        const unsigned = neg ? s.slice(1) : s;
+        const parts = unsigned.split(".");
+        const whole = parts[0] || "0";
+        const frac = parts[1] || "";
+        if (frac.length > precision) throw new Error("Amount has more than " + precision + " decimal places.");
+
+        const scale = 10 ** precision;
+        const wholeNum = Number(whole);
+        const fracNum = frac ? Number(frac.padEnd(precision, "0")) : 0;
+        if (!Number.isFinite(wholeNum) || !Number.isFinite(fracNum)) throw new Error("Amount must be numeric.");
+        const minor = wholeNum * scale + fracNum;
+        if (!Number.isSafeInteger(minor)) throw new Error("Amount is too large.");
+        return neg ? -minor : minor;
+      }
+
+      function fmtMinor(minor, precision) {
+        const n = Number(minor || 0);
+        if (!Number.isFinite(n)) return "";
+        const scale = 10 ** precision;
+        const sign = n < 0 ? "-" : "";
+        const abs = Math.abs(Math.trunc(n));
+        const whole = Math.floor(abs / scale);
+        if (precision === 0) return sign + whole.toLocaleString();
+        const frac = String(abs % scale).padStart(precision, "0");
+        return sign + whole.toLocaleString() + "." + frac;
       }
 
       function parseClearedStatus(raw) {
@@ -520,7 +553,7 @@
         return rows;
       }
 
-      function parseCsvRows(text) {
+      function parseCsvRows(text, usdPrecision) {
         const matrix = csvParse(text);
         if (!matrix.length) throw new Error("CSV is empty.");
 
@@ -552,7 +585,12 @@
           const category = String(line[idx.category] || "").trim();
           const subcategory = idx.subcategory >= 0 ? String(line[idx.subcategory] || "").trim() : "";
           const memo = idx.memo >= 0 ? String(line[idx.memo] || "").trim() : "";
-          const amount = parseAmount(line[idx.amount]);
+          let amountMinor = null;
+          try {
+            amountMinor = parseMajorToMinor(line[idx.amount], usdPrecision);
+          } catch (err) {
+            throw new Error("Line " + (r + 2) + " invalid amount '" + String(line[idx.amount] || "").trim() + "': " + (err && err.message ? err.message : "invalid amount"));
+          }
           const status = idx.cleared >= 0 ? parseClearedStatus(line[idx.cleared]) : "cleared";
 
           out.push({
@@ -563,7 +601,7 @@
             category: category,
             subcategory: subcategory,
             memo: memo,
-            amount: amount,
+            amountMinor: amountMinor,
             status: status
           });
         }
@@ -585,12 +623,12 @@
             "<td>" + escapeHtml(r.payee) + "</td>" +
             "<td>" + escapeHtml(r.category) + "</td>" +
             "<td>" + escapeHtml(r.subcategory) + "</td>" +
-            "<td>" + escapeHtml(r.amount) + "</td>" +
+            "<td>" + escapeHtml(fmtMinor(r.amountMinor, state.usdPrecision)) + "</td>" +
             "<td>" + escapeHtml(r.status || "") + "</td>" +
             "</tr>";
         }).join("");
 
-        const bad = state.parsedRows.filter((r) => !r.date || !r.account || !r.category || r.amount == null || !r.status).length;
+        const bad = state.parsedRows.filter((r) => !r.date || !r.account || !r.category || r.amountMinor == null || !r.status).length;
         $("#previewSummary").textContent = "Parsed rows: " + state.parsedRows.length + ". Invalid rows: " + bad + ".";
       }
 
@@ -599,7 +637,7 @@
         if (!row.date) missing.push("date");
         if (!row.account) missing.push("account");
         if (!row.category) missing.push("category");
-        if (row.amount == null) missing.push("amount");
+        if (row.amountMinor == null) missing.push("amount");
         if (!row.status) missing.push("cleared");
         return missing.length ? ("missing/invalid: " + missing.join(", ")) : "";
       }
@@ -607,7 +645,7 @@
       function firstInvalidRow(rows) {
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i];
-          if (!r.date || !r.account || !r.category || r.amount == null || !r.status) {
+          if (!r.date || !r.account || !r.category || r.amountMinor == null || !r.status) {
             return r;
           }
         }
@@ -642,21 +680,42 @@
         return String(name || "").trim().toLowerCase();
       }
 
+      function indexByName(records) {
+        const byName = new Map();
+        for (const record of (records || [])) {
+          const key = keyOfName(record && record.name);
+          if (!key) continue;
+          const current = byName.get(key);
+          if (!current) {
+            byName.set(key, record);
+            continue;
+          }
+          // If duplicates exist, prefer non-archived so imports use active records when available.
+          if (current && current.is_archived === true && record && record.is_archived !== true) {
+            byName.set(key, record);
+          }
+        }
+        return byName;
+      }
+
       async function loadReferenceData() {
         const [accounts, categories, assets] = await Promise.all([
-          listRecordsSafe("accounts", { filter: "is_archived = false", sort: "name", perPage: 500 }),
-          listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 500 }),
+          listRecordsSafe("accounts", { sort: "name", perPage: 500 }),
+          listRecordsSafe("categories", { sort: "name", perPage: 500 }),
           listRecordsSafe("assets", { sort: "symbol", perPage: 200 })
         ]);
 
-        state.refs.accountsByName = new Map(accounts.map((a) => [keyOfName(a.name), a]));
-        state.refs.categoriesByName = new Map(categories.map((c) => [keyOfName(c.name), c]));
+        state.refs.accountsByName = indexByName(accounts);
+        state.refs.categoriesByName = indexByName(categories);
         state.refs.assetsBySymbol = new Map(assets.map((a) => [String(a.symbol || "").toUpperCase(), a]));
       }
 
       async function ensureUsdAsset() {
         const existing = state.refs.assetsBySymbol.get("USD");
-        if (existing) return existing;
+        if (existing) {
+          state.usdPrecision = normalizePrecision(existing.precision);
+          return existing;
+        }
 
         const created = await createRecord("assets", {
           symbol: "USD",
@@ -665,6 +724,7 @@
         });
 
         state.refs.assetsBySymbol.set("USD", created);
+        state.usdPrecision = normalizePrecision(created.precision);
         pushLog("ok", "Created missing asset USD (" + created.id + ").");
         return created;
       }
@@ -715,7 +775,7 @@
       }
 
       function buildExternalId(fileName, row) {
-        const core = [fileName, row.lineNo, row.date, row.account, row.category, row.amount].join("|");
+        const core = [fileName, row.lineNo, row.date, row.account, row.category, row.amountMinor].join("|");
         return "import:csv:" + core;
       }
 
@@ -728,9 +788,9 @@
           ordered[1].lineNo,
           ordered[0].date,
           ordered[0].account,
-          ordered[0].amount,
+          ordered[0].amountMinor,
           ordered[1].account,
-          ordered[1].amount
+          ordered[1].amountMinor
         ].join("|");
         return "import:csv:" + core;
       }
@@ -741,16 +801,16 @@
 
       function findPairedTransferIndex(rows, index, consumedIndexes) {
         const row = rows[index];
-        if (!row || !row.date || !row.account || !row.category || row.amount == null || !row.status) return -1;
+        if (!row || !row.date || !row.account || !row.category || row.amountMinor == null || !row.status) return -1;
         if (!isTransferCategory(row.category)) return -1;
 
         for (let j = index + 1; j < rows.length; j++) {
           if (consumedIndexes.has(j)) continue;
           const candidate = rows[j];
-          if (!candidate || !candidate.date || !candidate.account || !candidate.category || candidate.amount == null || !candidate.status) continue;
+          if (!candidate || !candidate.date || !candidate.account || !candidate.category || candidate.amountMinor == null || !candidate.status) continue;
           if (!isTransferCategory(candidate.category)) continue;
           if (candidate.date !== row.date) continue;
-          if (candidate.amount === -row.amount) return j;
+          if (candidate.amountMinor === -row.amountMinor) return j;
         }
 
         return -1;
@@ -787,7 +847,7 @@
             if (consumedIndexes.has(i)) continue;
             const row = state.parsedRows[i];
 
-            if (!row.date || !row.account || !row.category || row.amount == null || !row.status) {
+            if (!row.date || !row.account || !row.category || row.amountMinor == null || !row.status) {
               skipped += 1;
               pushLog("warn", "Line " + row.lineNo + " skipped: missing required value (date/account/category/amount/cleared).");
               if (!loggedFirstInvalid) {
@@ -798,7 +858,7 @@
                   date: row.date,
                   account: row.account,
                   category: row.category,
-                  amount: row.amount,
+                  amount: row.amountMinor,
                   status: row.status,
                   payee: row.payee,
                   subcategory: row.subcategory,
@@ -823,7 +883,7 @@
                 if (!hadAccount) createdAccounts += 1;
 
                 const hadCategory = state.refs.categoriesByName.has(keyOfName(groupRow.category));
-                const category = await ensureCategory(groupRow.category, groupRow.amount);
+                const category = await ensureCategory(groupRow.category, groupRow.amountMinor);
                 if (!hadCategory) createdCategories += 1;
 
                 groupAccounts.push(account);
@@ -867,7 +927,7 @@
                     account: groupAccounts[g].id,
                     category: groupCategories[g].id,
                     asset: usd.id,
-                    qty: groupRow.amount,
+                    qty: groupRow.amountMinor,
                     memo: groupRow.memo || null,
                     status: groupRow.status
                   };
@@ -930,7 +990,9 @@
         }
 
         const text = await state.file.text();
-        const parsed = parseCsvRows(text);
+        await loadReferenceData();
+        await ensureUsdAsset();
+        const parsed = parseCsvRows(text, state.usdPrecision);
         state.parsedRows = parsed.rows;
         renderPreview();
         setBusy();
@@ -942,7 +1004,7 @@
             date: badRow.date,
             account: badRow.account,
             category: badRow.category,
-            amount: badRow.amount,
+            amount: badRow.amountMinor,
             status: badRow.status,
             payee: badRow.payee,
             subcategory: badRow.subcategory,

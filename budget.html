@@ -315,6 +315,7 @@
         loading: false,
         year: now.getFullYear(),
         selectedMonth: now.getMonth() + 1,
+        baseAssetPrecision: 2,
         categories: [],
         budgetByCategoryMonth: new Map(),
         budgetLineRecordByKey: new Map(),
@@ -336,12 +337,55 @@
           .replaceAll("'", "&#039;");
       }
 
-      function fmtMoney(n) {
-        const value = Number(n || 0);
-        return value.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2
-        });
+      function normalizePrecision(raw) {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0 && n <= 9) return n;
+        return 2;
+      }
+
+      function parseMajorToMinor(raw, precision) {
+        let s = String(raw == null ? "" : raw).trim();
+        if (!s) throw new Error("Amount is required.");
+        s = s.replaceAll(",", "").replaceAll("$", "").trim();
+        if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
+        if (!/^-?\d+(\.\d+)?$/.test(s)) throw new Error("Amount must be numeric.");
+
+        const neg = s.startsWith("-");
+        const unsigned = neg ? s.slice(1) : s;
+        const parts = unsigned.split(".");
+        const whole = parts[0] || "0";
+        const frac = parts[1] || "";
+        if (frac.length > precision) throw new Error("Amount has more than " + precision + " decimal places.");
+
+        const scale = 10 ** precision;
+        const wholeNum = Number(whole);
+        const fracNum = frac ? Number(frac.padEnd(precision, "0")) : 0;
+        if (!Number.isFinite(wholeNum) || !Number.isFinite(fracNum)) throw new Error("Amount must be numeric.");
+
+        const minor = wholeNum * scale + fracNum;
+        if (!Number.isSafeInteger(minor)) throw new Error("Amount is too large.");
+        return neg ? -minor : minor;
+      }
+
+      function parseMinorInt(raw, fieldName) {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || !Number.isSafeInteger(n)) {
+          throw new Error(fieldName + " must be a fixed-precision integer in minor units.");
+        }
+        return n;
+      }
+
+      function fmtMoney(minor) {
+        const n = Number(minor || 0);
+        if (!Number.isFinite(n)) return "0";
+        const precision = state.baseAssetPrecision;
+        const scale = 10 ** precision;
+        const sign = n < 0 ? "-" : "";
+        const abs = Math.abs(Math.trunc(n));
+        const whole = Math.floor(abs / scale);
+        const frac = String(abs % scale).padStart(precision, "0");
+        if (precision === 0) return sign + whole.toLocaleString();
+        return sign + whole.toLocaleString() + "." + frac;
       }
 
       function monthKey(y, m) {
@@ -661,12 +705,7 @@
       }
 
       function parseMoneyInput(raw) {
-        let s = String(raw == null ? "" : raw).trim();
-        if (!s) return null;
-        s = s.replaceAll(",", "").replaceAll("$", "").trim();
-        if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
-        const n = Number(s);
-        return Number.isFinite(n) ? n : null;
+        return parseMajorToMinor(raw, state.baseAssetPrecision);
       }
 
       function stopEditing() {
@@ -687,7 +726,7 @@
         cell.classList.add("editing");
         cell.innerHTML = '<input type="text" class="cellInput" />';
         const input = cell.querySelector("input");
-        input.value = String(current);
+        input.value = fmtMoney(current);
         input.focus();
         input.select();
 
@@ -779,15 +818,17 @@
           return;
         }
 
-        const parsed = parseMoneyInput(input.value);
-        if (parsed == null) {
+        let parsed = null;
+        try {
+          parsed = parseMoneyInput(input.value);
+        } catch (err) {
           if (nav && nav.reason === "blur") {
             renderTable();
             stopEditing();
-            setStatus("warn", "Edit canceled due to invalid value.");
+            setStatus("warn", "Edit canceled: " + (err && err.message ? err.message : "invalid value."));
             return;
           }
-          setStatus("bad", "Invalid budgeted value.");
+          setStatus("bad", "Invalid budgeted value: " + (err && err.message ? err.message : "invalid value."));
           input.focus();
           input.select();
           return;
@@ -899,8 +940,8 @@
         for (const line of budgetLines) {
           const catId = String(line.category || "");
           const month = String(line.month || "");
-          const amount = Number(line.budgeted || 0);
-          if (!catId || !month || !Number.isFinite(amount)) continue;
+          if (!catId || !month) continue;
+          const amount = parseMinorInt(line.budgeted || 0, "budget_lines.budgeted");
           if (!categoriesById.has(catId)) continue;
           if (month < janKey) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + amount);
           if (month >= janKey && month <= decKey) {
@@ -920,8 +961,7 @@
           if (!catId || !categoriesById.has(catId)) continue;
           const month = String(row.month || "");
           if (!/^\d{4}-\d{2}$/.test(month)) continue;
-          const qty = Number(row.activity || 0);
-          if (!Number.isFinite(qty)) continue;
+          const qty = parseMinorInt(row.activity || 0, "v_activity_by_category_month.activity");
           if (month < janKey) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
           if (month >= janKey && month <= decKey) {
             const key = catId + "|" + month;
@@ -939,11 +979,22 @@
         }
       }
 
+      async function loadBaseAssetPrecision() {
+        const assets = await listRecordsSafe("assets", {
+          sort: "symbol",
+          perPage: 500
+        });
+        const usd = assets.find((a) => String(a.symbol || "").toUpperCase() === "USD");
+        if (!usd) throw new Error("USD asset was not found.");
+        state.baseAssetPrecision = normalizePrecision(usd.precision);
+      }
+
       async function refreshAll() {
         if (!SESSION.token) return;
         state.loading = true;
         setBusy();
         try {
+          await loadBaseAssetPrecision();
           await loadBudgetData();
           buildGridRows();
           renderTable();

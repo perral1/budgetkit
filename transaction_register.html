@@ -328,6 +328,7 @@
         accounts: [],
         accountById: new Map(),
         assets: [],
+        assetPrecisionById: new Map(),
         categories: [],
         categoryById: new Map(),
         txns: new Map(),
@@ -363,6 +364,65 @@
         const d = new Date(dateValue);
         if (isNaN(d.getTime())) return String(dateValue);
         return d.toISOString().slice(0, 10);
+      }
+
+      function normalizePrecision(raw) {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0 && n <= 9) return n;
+        return 2;
+      }
+
+      function assetPrecision(assetId) {
+        return state.assetPrecisionById.get(String(assetId || "")) ?? 2;
+      }
+
+      function parseMinorInt(raw, fieldName) {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || !Number.isSafeInteger(n)) {
+          throw new Error(fieldName + " must be a fixed-precision integer in minor units.");
+        }
+        return n;
+      }
+
+      function parseMajorToMinor(raw, precision) {
+        let s = String(raw == null ? "" : raw).trim();
+        if (!s) throw new Error("Amount is required.");
+        s = s.replaceAll(",", "").replaceAll("$", "").trim();
+        if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
+        if (!/^-?\d+(\.\d+)?$/.test(s)) throw new Error("Amount must be numeric.");
+
+        const neg = s.startsWith("-");
+        const unsigned = neg ? s.slice(1) : s;
+        const parts = unsigned.split(".");
+        const whole = parts[0] || "0";
+        const frac = parts[1] || "";
+        if (frac.length > precision) throw new Error("Amount has more than " + precision + " decimal places.");
+
+        const scale = 10 ** precision;
+        const wholeNum = Number(whole);
+        const fracNum = frac ? Number(frac.padEnd(precision, "0")) : 0;
+        if (!Number.isFinite(wholeNum) || !Number.isFinite(fracNum)) throw new Error("Amount must be numeric.");
+        const minor = wholeNum * scale + fracNum;
+        if (!Number.isSafeInteger(minor)) throw new Error("Amount is too large.");
+        return neg ? -minor : minor;
+      }
+
+      function minorToMajor(minor, precision) {
+        const n = Number(minor || 0);
+        if (!Number.isFinite(n)) return 0;
+        return n / (10 ** precision);
+      }
+
+      function fmtMinor(minor, precision) {
+        const n = Number(minor || 0);
+        if (!Number.isFinite(n)) return "";
+        const scale = 10 ** precision;
+        const sign = n < 0 ? "-" : "";
+        const abs = Math.abs(Math.trunc(n));
+        const whole = Math.floor(abs / scale);
+        if (precision === 0) return sign + whole.toLocaleString();
+        const frac = String(abs % scale).padStart(precision, "0");
+        return sign + whole.toLocaleString() + "." + frac;
       }
 
       function setStatus(kind, message) {
@@ -593,6 +653,7 @@
         state.accounts = accounts;
         state.accountById = new Map(state.accounts.map((a) => [String(a.id), a]));
         state.assets = assets;
+        state.assetPrecisionById = new Map(state.assets.map((a) => [String(a.id), normalizePrecision(a.precision)]));
         state.categories = categories;
         state.categoryById = new Map(state.categories.map((c) => [String(c.id), c]));
 
@@ -626,6 +687,9 @@
         await ensureCategoriesLoaded(entries.map((e) => e && e.category));
 
         const filtered = filteredClientSide(entries);
+        filtered.forEach((e) => {
+          parseMinorInt(e && e.qty, "entries.qty");
+        });
         state.entries = filtered;
         state.txns = new Map();
         await backfillMissingLinkedTxns(state.entries);
@@ -692,6 +756,15 @@
       function categoryDisplayName(categoryId) {
         const c = getCategoryById(categoryId);
         return (c && (c.name || c.id)) || String(categoryId || "");
+      }
+
+      function getEntryAssetId(entry) {
+        return String((entry && entry.asset) || "");
+      }
+
+      function qtyMajorForEntry(entry) {
+        const precision = assetPrecision(getEntryAssetId(entry));
+        return minorToMajor(parseMinorInt(entry && entry.qty, "entries.qty"), precision);
       }
 
       function editableAccountOptions(selectedAccountId) {
@@ -814,8 +887,11 @@
         if (column === "memo") return txn.memo || "";
         if (column === "amount") {
           return (group || []).reduce((sum, e) => {
-            const q = Number(e && e.qty);
-            return Number.isFinite(q) ? (sum + q) : sum;
+            try {
+              return sum + qtyMajorForEntry(e);
+            } catch {
+              return sum;
+            }
           }, 0);
         }
         if (column === "status") {
@@ -1059,8 +1135,6 @@
           memo = fieldOrNull($('input[data-edit="txn-memo"]', root).value);
           if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) throw new Error("Date must be in YYYY-MM-DD format.");
           normalizedDate = normalizeDateToNoonUtc(dateRaw);
-          const usdAssetId = getUsdAssetId();
-          if (!usdAssetId) throw new Error("USD asset was not found.");
 
           const entryRows = $$('tr[data-edit-entry="1"]', $("#registerBody"));
           for (const row of entryRows) {
@@ -1074,14 +1148,18 @@
             if (!account) throw new Error("Account is required for all entries.");
             if (!status) throw new Error("Status is required for all entries.");
             if (!qtyRaw) throw new Error("Amount is required for all entries.");
-            const qty = Number(qtyRaw);
-            if (!Number.isFinite(qty)) throw new Error("Amount must be numeric for all entries.");
+            const sourceEntry = (state.editDraft.entries || []).find((e) => String(e.id || "") === entryId);
+            if (!sourceEntry) throw new Error("Entry " + entryId + " is missing from edit draft.");
+            const entryAssetId = String(sourceEntry.asset || getUsdAssetId() || "");
+            if (!entryAssetId) throw new Error("Entry asset is required.");
+            const precision = assetPrecision(entryAssetId);
+            const qty = parseMajorToMinor(qtyRaw, precision);
 
             const body = {
               date: normalizedDate,
               account: account,
               category: category || null,
-              asset: usdAssetId,
+              asset: entryAssetId,
               qty: qty,
               status: status
             };
@@ -1213,7 +1291,7 @@
                 '<td><input class="inlineInput" data-edit="txn-payee" type="text" value="' + escapeHtml(draftTxn.payee || "") + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), true) + "</select></td>",
                 '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
-                '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
+                '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
               ].join("");
               body.appendChild(trSingle);
@@ -1245,7 +1323,7 @@
                 "<td></td>",
                 '<td><select class="inlineSelect" data-edit="entry-category">' + optionList(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), true) + "</select></td>",
                 "<td></td>",
-                '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : String(e.qty)) + '" /></td>',
+                '<td><input class="inlineInput" data-edit="entry-qty" type="text" value="' + escapeHtml(e.qty == null ? "" : fmtMinor(e.qty, assetPrecision(e.asset))) + '" /></td>',
                 '<td><select class="inlineSelect" data-edit="entry-status"><option value="pending"' + (e.status === "pending" ? " selected" : "") + '>pending</option><option value="cleared"' + (e.status === "cleared" ? " selected" : "") + '>cleared</option></select></td>'
               ].join("");
               body.appendChild(trE);
@@ -1260,8 +1338,10 @@
             const tr = document.createElement("tr");
             if (isSelected) tr.classList.add("selected");
 
-            const qty = Number(e.qty);
-            const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
+            let qtyTxt = e.qty == null ? "" : String(e.qty);
+            try {
+              qtyTxt = fmtMinor(e.qty, assetPrecision(e.asset));
+            } catch {}
 
             tr.innerHTML = [
               "<td>" + escapeHtml(fmtDate(e.date)) + "</td>",
@@ -1280,8 +1360,11 @@
           }
 
           const totalQty = group.reduce((sum, e) => {
-            const q = Number(e.qty);
-            return Number.isFinite(q) ? (sum + q) : sum;
+            try {
+              return sum + qtyMajorForEntry(e);
+            } catch {
+              return sum;
+            }
           }, 0);
           const totalTxt = totalQty.toLocaleString(undefined, { maximumFractionDigits: 8 });
 
@@ -1306,8 +1389,10 @@
             tr.className = "txn-sub" + (idx === group.length - 1 ? " txn-sub-end" : "");
             if (isSelected) tr.classList.add("selected");
 
-            const qty = Number(e.qty);
-            const qtyTxt = Number.isFinite(qty) ? qty.toLocaleString(undefined, { maximumFractionDigits: 8 }) : (e.qty == null ? "" : String(e.qty));
+            let qtyTxt = e.qty == null ? "" : String(e.qty);
+            try {
+              qtyTxt = fmtMinor(e.qty, assetPrecision(e.asset));
+            } catch {}
             tr.innerHTML = [
               "<td></td>",
               "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
@@ -1464,6 +1549,7 @@
         state.accounts = [];
         state.accountById = new Map();
         state.assets = [];
+        state.assetPrecisionById = new Map();
         state.categories = [];
         state.categoryById = new Map();
         state.txns = new Map();

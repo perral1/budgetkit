@@ -271,9 +271,11 @@
         file: null,
         parsed: null,
         importing: false,
+        usdPrecision: 2,
         refs: {
           categoriesByName: new Map(),
-          budgetLineByKey: new Map()
+          budgetLineByKey: new Map(),
+          assetsBySymbol: new Map()
         }
       };
 
@@ -521,13 +523,45 @@
         return d.toISOString().slice(0, 7);
       }
 
-      function parseAmount(raw) {
+      function normalizePrecision(raw) {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0 && n <= 9) return n;
+        return 2;
+      }
+
+      function parseMajorToMinor(raw, precision) {
         let s = String(raw == null ? "" : raw).trim();
-        if (!s) return null;
+        if (!s) throw new Error("Amount is required.");
         s = s.replaceAll("$", "").replaceAll(",", "").trim();
         if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
-        const n = Number(s);
-        return Number.isFinite(n) ? n : null;
+        if (!/^-?\d+(\.\d+)?$/.test(s)) throw new Error("Amount must be numeric.");
+
+        const neg = s.startsWith("-");
+        const unsigned = neg ? s.slice(1) : s;
+        const parts = unsigned.split(".");
+        const whole = parts[0] || "0";
+        const frac = parts[1] || "";
+        if (frac.length > precision) throw new Error("Amount has more than " + precision + " decimal places.");
+
+        const scale = 10 ** precision;
+        const wholeNum = Number(whole);
+        const fracNum = frac ? Number(frac.padEnd(precision, "0")) : 0;
+        if (!Number.isFinite(wholeNum) || !Number.isFinite(fracNum)) throw new Error("Amount must be numeric.");
+        const minor = wholeNum * scale + fracNum;
+        if (!Number.isSafeInteger(minor)) throw new Error("Amount is too large.");
+        return neg ? -minor : minor;
+      }
+
+      function fmtMinor(minor, precision) {
+        const n = Number(minor || 0);
+        if (!Number.isFinite(n)) return "";
+        const scale = 10 ** precision;
+        const sign = n < 0 ? "-" : "";
+        const abs = Math.abs(Math.trunc(n));
+        const whole = Math.floor(abs / scale);
+        if (precision === 0) return sign + whole.toLocaleString();
+        const frac = String(abs % scale).padStart(precision, "0");
+        return sign + whole.toLocaleString() + "." + frac;
       }
 
       function keyOfName(name) {
@@ -541,7 +575,7 @@
         return "expense";
       }
 
-      function parseBudgetCsv(text) {
+      function parseBudgetCsv(text, usdPrecision) {
         const matrix = csvParse(text);
         if (!matrix.length) throw new Error("CSV is empty.");
 
@@ -580,21 +614,20 @@
 
           const month = normalizeMonth(line[0]);
           if (!month) {
-            invalidRows.push({ lineNo: r + 1, reason: "Invalid month/date in first column", rawMonth: String(line[0] || "") });
-            continue;
+            throw new Error("Line " + (r + 1) + " has invalid month/date in first column.");
           }
 
           const values = [];
-          const badCells = [];
 
           for (const col of categoryColumns) {
             const raw = line[col.col];
             const str = String(raw == null ? "" : raw).trim();
             if (!str) continue;
-            const num = parseAmount(str);
-            if (num == null) {
-              badCells.push(col.name + "='" + str + "'");
-              continue;
+            let num = null;
+            try {
+              num = parseMajorToMinor(str, usdPrecision);
+            } catch (err) {
+              throw new Error("Line " + (r + 1) + " invalid value for '" + col.name + "': " + (err && err.message ? err.message : "invalid amount"));
             }
             values.push({
               categoryName: col.name,
@@ -602,14 +635,6 @@
               amount: num
             });
             numericCellCount += 1;
-          }
-
-          if (badCells.length) {
-            invalidRows.push({
-              lineNo: r + 1,
-              reason: "Invalid numeric cell(s): " + badCells.join(", "),
-              rawMonth: String(line[0] || "")
-            });
           }
 
           rows.push({
@@ -643,7 +668,7 @@
 
         const rows = parsed.rows.slice(0, 15);
         body.innerHTML = rows.map((row) => {
-          const sample = row.values.slice(0, 4).map((v) => v.categoryName + "=" + v.amount).join("; ");
+          const sample = row.values.slice(0, 4).map((v) => v.categoryName + "=" + fmtMinor(v.amount, state.usdPrecision)).join("; ");
           return "<tr>" +
             "<td>" + row.lineNo + "</td>" +
             "<td>" + escapeHtml(row.month) + "</td>" +
@@ -665,7 +690,7 @@
       }
 
       async function loadReferenceData(minMonth, maxMonth) {
-        const [categories, budgetLines] = await Promise.all([
+        const [categories, budgetLines, assets] = await Promise.all([
           listRecordsSafe("categories", { filter: "is_archived = false", sort: "name", perPage: 1000 }),
           listRecordsSafe("budget_lines", {
             filter: minMonth && maxMonth
@@ -673,10 +698,15 @@
               : "",
             sort: "month",
             perPage: 1000
-          })
+          }),
+          listRecordsSafe("assets", { sort: "symbol", perPage: 500 })
         ]);
 
         state.refs.categoriesByName = new Map(categories.map((c) => [keyOfName(c.name), c]));
+        state.refs.assetsBySymbol = new Map(assets.map((a) => [String(a.symbol || "").toUpperCase(), a]));
+        const usd = state.refs.assetsBySymbol.get("USD");
+        if (!usd) throw new Error("USD asset was not found.");
+        state.usdPrecision = normalizePrecision(usd.precision);
         const byKey = new Map();
         for (const line of budgetLines) {
           const month = String(line.month || "");
@@ -685,6 +715,14 @@
           byKey.set(month + "|" + catId, line);
         }
         state.refs.budgetLineByKey = byKey;
+      }
+
+      async function loadUsdPrecision() {
+        const assets = await listRecordsSafe("assets", { sort: "symbol", perPage: 500 });
+        state.refs.assetsBySymbol = new Map(assets.map((a) => [String(a.symbol || "").toUpperCase(), a]));
+        const usd = state.refs.assetsBySymbol.get("USD");
+        if (!usd) throw new Error("USD asset was not found.");
+        state.usdPrecision = normalizePrecision(usd.precision);
       }
 
       async function ensureCategoryByName(categoryName, createMissing) {
@@ -745,7 +783,10 @@
                 const existing = state.refs.budgetLineByKey.get(key);
                 if (existing) {
                   const oldVal = Number(existing.budgeted || 0);
-                  if (Math.abs(oldVal - cell.amount) < 1e-9) {
+                  if (!Number.isFinite(oldVal) || !Number.isSafeInteger(oldVal)) {
+                    throw new Error("Existing budget_lines.budgeted is not a fixed-precision integer for month " + row.month + ".");
+                  }
+                  if (oldVal === cell.amount) {
                     unchanged += 1;
                     continue;
                   }
@@ -800,22 +841,13 @@
         }
 
         const text = await state.file.text();
-        const parsed = parseBudgetCsv(text);
+        await loadUsdPrecision();
+        const parsed = parseBudgetCsv(text, state.usdPrecision);
         state.parsed = parsed;
         renderPreview();
         setBusy();
-
-        for (const warning of parsed.warnings) {
-          pushLog("warn", warning);
-        }
-
-        if (parsed.invalidRows.length) {
-          const first = parsed.invalidRows[0];
-          pushLog("warn", "First parse issue at line " + first.lineNo + ": " + first.reason + ".");
-          setStatus("warn", "CSV parsed with " + parsed.invalidRows.length + " parse issues. Import will skip invalid cells/rows.");
-        } else {
-          setStatus("ok", "CSV parsed. Ready to import " + parsed.numericCellCount + " numeric budget cells.");
-        }
+        for (const warning of parsed.warnings) pushLog("warn", warning);
+        setStatus("ok", "CSV parsed. Ready to import " + parsed.numericCellCount + " numeric budget cells.");
       }
 
       function setFile(file) {
