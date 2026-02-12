@@ -772,7 +772,7 @@
         if (found) return found;
 
         // Some deployments may not include every enum value; retry with common types.
-        const typeCandidates = ["other", "bank", "cash", "credit", "brokerage", "crypto", "virtual"];
+        const typeCandidates = ["bank", "credit", "cash", "virtual", "roth", "pretax", "hsa", "brokerage"];
         let lastErr = null;
         for (let i = 0; i < typeCandidates.length; i++) {
           const type = typeCandidates[i];

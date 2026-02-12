@@ -21,7 +21,7 @@ Represents a container where assets live.
 
 Fields:
 - `name` (text, required)
-- `type` (select, required): `bank | credit | brokerage | cash | crypto | virtual | other`
+- `type` (select, required): `bank | credit | cash | virtual | roth | pretax | hsa | brokerage`
 - `institution` (text, optional)
 - `is_archived` (bool, default `false`)
 - `meta` (json)

@@ -42,10 +42,21 @@
       display:flex; flex-direction:column; gap:6px;
     }
     .field label{ font-size:12px; color:var(--muted); }
+    .field label.bulkMixedLabel{ color:#94a8bf; }
+    .field label.bulkLockedLabel{ color:#8393a7; }
     input[type="text"], input[type="password"], textarea, select{
       background:rgba(18,28,41,.9); color:var(--text);
       border:1px solid var(--line); border-radius:10px; padding:9px 10px; outline:none;
       min-width: 220px;
+    }
+    .bulkMixedControl{
+      border-color:rgba(169,183,200,.5) !important;
+      color:#a9b7c8 !important;
+      opacity:.82;
+    }
+    .bulkLockedControl{
+      opacity:.65;
+      cursor:not-allowed;
     }
     textarea{ min-width: 300px; min-height: 90px; resize: vertical; font-family:var(--mono); font-size:12px; line-height:1.35; }
     input:focus, textarea:focus, select:focus{ border-color:rgba(122,168,255,.8); box-shadow:0 0 0 3px rgba(122,168,255,.15); }
@@ -509,12 +520,12 @@
       label: "Accounts",
       help: [
         "Schema: name (required), type (required), institution (optional), is_archived (bool), meta (json).",
-        "Type enum: bank | credit | brokerage | cash | crypto | virtual | other.",
+        "Type enum: bank | credit | cash | virtual | roth | pretax | hsa | brokerage.",
         "Note: Budget modules typically exclude accounts.type = virtual (per schema)."
       ].join("\n"),
       fields: [
         { key:"name", label:"Name", type:"text", required:true, placeholder:"Checking" },
-        { key:"type", label:"Type", type:"select", required:true, options:["bank","credit","brokerage","cash","crypto","virtual","other"] },
+        { key:"type", label:"Type", type:"select", required:true, options:["bank","credit","cash","virtual","roth","pretax","hsa","brokerage"] },
         { key:"institution", label:"Institution", type:"text", required:false, placeholder:"Chase" },
         { key:"is_archived", label:"Archived", type:"bool", required:false },
         { key:"meta", label:"Meta (JSON)", type:"json", required:false, placeholder:'{"color":"#7aa8ff"}' }
@@ -588,6 +599,7 @@
         { key:"name", label:"Name" },
         { key:"card_category", label:"Card Category", pill:true },
         { key:"txn_count", label:"Txns", render:"payeeTxnCount", mono:true },
+        { key:"newest_txn_date", label:"Newest Txn", render:"payeeNewestTxnDate", mono:true },
         { key:"is_archived", label:"Archived", pillBool:true }
       ]
     }
@@ -600,8 +612,15 @@
   let assetEntryCounts = new Map();
   let categoryEntryCounts = new Map();
   let payeeTxnCounts = new Map();
+  let payeeNewestTxnDates = new Map();
   let payeeIdsByCategory = new Map();
-  let editing = { mode:"new", id:null, data:null };
+  let editing = { mode:"new", id:null, ids:[], data:null, mixedKeys:new Set(), lockedKeys:new Set() };
+  const BULK_LOCKED_FIELDS = {
+    accounts: new Set(["name"]),
+    assets: new Set(["symbol"]),
+    categories: new Set(["name"]),
+    payees: new Set(["name"])
+  };
   const tableSort = {
     accounts: { key: "name", direction: "asc" },
     assets: { key: "symbol", direction: "asc" },
@@ -637,6 +656,25 @@
     const n = Number(minor || 0);
     if(!Number.isFinite(n) || !Number.isSafeInteger(n)) return 0;
     return n / (10 ** precision);
+  }
+
+  function parseTxnDate(raw){
+    const v = String(raw || "").trim();
+    if(!v) return null;
+    let d;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(v)){
+      d = new Date(v + "T00:00:00Z");
+    }else{
+      d = new Date(v);
+    }
+    if(!Number.isFinite(d.getTime())) return null;
+    return d;
+  }
+
+  function fmtTxnDate(raw){
+    const d = parseTxnDate(raw);
+    if(!d) return String(raw || "");
+    return d.toISOString().slice(0,10);
   }
 
   async function listAllEntriesForStats(){
@@ -695,6 +733,7 @@
     const assetMap = new Map();
     const categoryMap = new Map();
     const payeeMap = new Map();
+    const payeeNewestTxnDateMap = new Map();
     const payeeIdsByCategoryMap = new Map();
     const [entries, assets, txns] = await Promise.all([listAllEntriesForStats(), listAllAssetsForStats(), listAllTxnsForStats()]);
     const precisionByAssetId = new Map(assets.map(a => [String(a?.id || ""), normalizePrecision(a?.precision)]));
@@ -703,9 +742,20 @@
     txns.forEach((t) => {
       const txnId = String(t?.id || "");
       const payeeId = String(t?.payee || "");
+      const txnDateRaw = String(t?.date || "");
       if(txnId && payeeId) payeeByTxnId.set(txnId, payeeId);
       if(!payeeId) return;
       payeeMap.set(payeeId, (payeeMap.get(payeeId) || 0) + 1);
+      if(txnDateRaw){
+        const nextD = parseTxnDate(txnDateRaw);
+        if(nextD){
+          const prevRaw = payeeNewestTxnDateMap.get(payeeId) || "";
+          const prevD = parseTxnDate(prevRaw);
+          if(!prevD || nextD.getTime() > prevD.getTime()){
+            payeeNewestTxnDateMap.set(payeeId, txnDateRaw);
+          }
+        }
+      }
     });
 
     entries.forEach(e => {
@@ -748,7 +798,7 @@
       }
     });
 
-    return { accountMap, assetMap, categoryMap, payeeMap, payeeIdsByCategoryMap };
+    return { accountMap, assetMap, categoryMap, payeeMap, payeeNewestTxnDateMap, payeeIdsByCategoryMap };
   }
 
   function entriesCountForRecord(tab, record){
@@ -796,6 +846,7 @@
     if(column.render === "assetEntryCount") return false;
     if(column.render === "categoryEntryCount") return false;
     if(column.render === "payeeTxnCount") return false;
+    if(column.render === "payeeNewestTxnDate") return false;
     return true;
   }
 
@@ -807,6 +858,94 @@
   function selectedRowsForActiveTab(){
     const selected = selectedSetForTab(activeTab);
     return records.filter(r => selected.has(String(r.id || "")));
+  }
+
+  function normalizeFieldValueForCompare(field, value){
+    if(field.type === "bool") return !!value ? "1" : "0";
+    if(field.type === "number"){
+      if(value == null || value === "") return "";
+      const n = Number(value);
+      return Number.isFinite(n) ? String(n) : "";
+    }
+    if(field.type === "json"){
+      if(value == null || value === "") return "null";
+      try{ return JSON.stringify(value); }catch{ return String(value); }
+    }
+    return String(value ?? "");
+  }
+
+  function readRawFieldValue(field, row){
+    if(field.type === "bool") return !!row?.[field.key];
+    if(field.type === "number"){
+      const v = row?.[field.key];
+      if(v == null || v === "") return "";
+      const n = Number(v);
+      return Number.isFinite(n) ? n : "";
+    }
+    if(field.type === "json") return row?.[field.key] ?? null;
+    return row?.[field.key] ?? "";
+  }
+
+  function computeBulkFieldState(schema, rows){
+    const mixedKeys = new Set();
+    const data = {};
+    (schema.fields || []).forEach((field) => {
+      if(!rows.length){
+        data[field.key] = (field.type === "bool") ? false : "";
+        return;
+      }
+      const firstRaw = readRawFieldValue(field, rows[0]);
+      const firstToken = normalizeFieldValueForCompare(field, firstRaw);
+      let mixed = false;
+      for(let i = 1; i < rows.length; i += 1){
+        const nextRaw = readRawFieldValue(field, rows[i]);
+        const nextToken = normalizeFieldValueForCompare(field, nextRaw);
+        if(nextToken !== firstToken){
+          mixed = true;
+          break;
+        }
+      }
+      if(mixed){
+        mixedKeys.add(field.key);
+        data[field.key] = (field.type === "bool") ? false : "";
+      }else{
+        data[field.key] = firstRaw;
+      }
+    });
+    return { data, mixedKeys };
+  }
+
+  function openBulkEditor(rows){
+    const schema = SCHEMA[activeTab];
+    const { data, mixedKeys } = computeBulkFieldState(schema, rows);
+    editing.mode = "bulk";
+    editing.id = null;
+    editing.ids = rows.map((r) => String(r.id || "")).filter(Boolean);
+    editing.data = data;
+    editing.mixedKeys = mixedKeys;
+    editing.lockedKeys = BULK_LOCKED_FIELDS[activeTab] ? new Set(BULK_LOCKED_FIELDS[activeTab]) : new Set();
+
+    $("#modalTitle").textContent = `Bulk edit ${schema.label} (${editing.ids.length} selected)`;
+    $("#recordMeta").textContent = `${editing.ids.length} selected`;
+
+    const grid = $("#formGrid");
+    grid.innerHTML = "";
+    schema.fields.forEach((f) => {
+      grid.appendChild(buildField(f, editing.data, {
+        bulkMixed: editing.mixedKeys.has(f.key),
+        bulkLocked: editing.lockedKeys.has(f.key)
+      }));
+    });
+
+    const baseHelp = schema.help || "";
+    const extra = [
+      "Bulk edit rules:",
+      "- Fields showing (multiple) are not changed unless you set a value.",
+      "- Locked fields are disabled for safety (unique identifiers)."
+    ].join("\n");
+    $("#formHelp").textContent = baseHelp ? (baseHelp + "\n\n" + extra) : extra;
+
+    showModal(true);
   }
 
   function hasArchiveFlag(tab){
@@ -921,13 +1060,85 @@
     refresh();
   }
 
+  async function cleanupPayees(){
+    if(activeTab !== "payees"){
+      toast("bad", "Cleanup unavailable", "Cleanup is only available on payees.");
+      return;
+    }
+    if(!window.confirm("Cleanup payees? This will delete payees with 0 linked txns and archive payees whose newest txn is over 1 year old.")) return;
+
+    const allPayees = await listAllRecords("payees", { q:"", showArchived:true, onlyArchived:false, perPage:500, sort:"name" });
+    const stats = await computeEntryStats();
+    const txnCounts = stats.payeeMap || new Map();
+    const newestByPayee = stats.payeeNewestTxnDateMap || new Map();
+    const cutoff = new Date();
+    cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 1);
+
+    let deleted = 0;
+    let archived = 0;
+    let deleteFailed = 0;
+    let archiveFailed = 0;
+    let firstError = "";
+
+    for(const p of allPayees){
+      const payeeId = String(p?.id || "");
+      if(!payeeId) continue;
+      const txnCount = Number(txnCounts.get(payeeId) || 0);
+      if(txnCount <= 0){
+        try{
+          await deleteRecord("payees", payeeId);
+          deleted += 1;
+        }catch(e){
+          deleteFailed += 1;
+          if(!firstError) firstError = e?.message || String(e);
+        }
+        continue;
+      }
+
+      const newestRaw = String(newestByPayee.get(payeeId) || "");
+      const newestDate = parseTxnDate(newestRaw);
+      if(!newestDate) continue;
+      if(newestDate.getTime() < cutoff.getTime() && !p?.is_archived){
+        try{
+          await updateRecord("payees", payeeId, { is_archived: true });
+          archived += 1;
+        }catch(e){
+          archiveFailed += 1;
+          if(!firstError) firstError = e?.message || String(e);
+        }
+      }
+    }
+
+    if(deleteFailed || archiveFailed){
+      toast("bad", "Cleanup partial", `Deleted ${deleted}, archived ${archived}, delete failed ${deleteFailed}, archive failed ${archiveFailed}.` + (firstError ? ` First error: ${firstError}` : ""));
+    }else{
+      toast("ok", "Cleanup complete", `Deleted ${deleted} payee(s). Archived ${archived} payee(s).`);
+    }
+    refresh();
+  }
+
   function renderBulkActions(){
     const wrap = $("#bulkActions");
     if(!wrap) return;
     wrap.innerHTML = "";
     const selected = selectedRowsForActiveTab();
     if(!selected.length){
-      wrap.classList.remove("active");
+      if(activeTab === "payees"){
+        const btnCleanup = document.createElement("button");
+        btnCleanup.className = "btn";
+        btnCleanup.textContent = "Cleanup";
+        btnCleanup.addEventListener("click", async () => {
+          try{
+            await cleanupPayees();
+          }catch(e){
+            toast("bad", "Cleanup failed", e.message || String(e));
+          }
+        });
+        wrap.appendChild(btnCleanup);
+        wrap.classList.add("active");
+      }else{
+        wrap.classList.remove("active");
+      }
       syncStickyOffsets();
       return;
     }
@@ -943,6 +1154,12 @@
       btnEdit.textContent = "Edit";
       btnEdit.addEventListener("click", () => openEditor("edit", selected[0]));
       wrap.appendChild(btnEdit);
+    }else if(selected.length > 1){
+      const btnBulkEdit = document.createElement("button");
+      btnBulkEdit.className = "btn";
+      btnBulkEdit.textContent = "Bulk edit";
+      btnBulkEdit.addEventListener("click", () => openBulkEditor(selected));
+      wrap.appendChild(btnBulkEdit);
     }
 
     if(hasArchiveFlag(activeTab)){
@@ -1136,6 +1353,11 @@
     if(column.render === "payeeTxnCount"){
       return Number(payeeTxnCounts.get(row.id) || 0);
     }
+    if(column.render === "payeeNewestTxnDate"){
+      const raw = payeeNewestTxnDates.get(row.id) || "";
+      const d = parseTxnDate(raw);
+      return d ? d.getTime() : 0;
+    }
     if(column.pillBool){
       return row[column.key] ? 1 : 0;
     }
@@ -1289,6 +1511,9 @@
           td.textContent = String(categoryEntryCounts.get(r.id) || 0);
         } else if(c.render === "payeeTxnCount"){
           td.textContent = String(payeeTxnCounts.get(r.id) || 0);
+        } else if(c.render === "payeeNewestTxnDate"){
+          const raw = payeeNewestTxnDates.get(r.id) || "";
+          td.textContent = raw ? fmtTxnDate(raw) : "";
         } else if(c.pillBool){
           const v = !!r[c.key];
           const span = document.createElement("span");
@@ -1319,32 +1544,70 @@
     updatePagerUI();
   }
 
-  function buildField(field, data){
+  function buildField(field, data, opts={}){
+    const bulkMixed = !!opts.bulkMixed;
+    const bulkLocked = !!opts.bulkLocked;
     const colSpan = (field.type === "json") ? "col-12" : (field.type === "relation") ? "col-6" : "col-6";
     const box = document.createElement("div");
     box.className = colSpan + " field";
 
     const label = document.createElement("label");
-    label.textContent = field.label + (field.required ? " *" : "");
+    const requiredSuffix = field.required ? " *" : "";
+    if(bulkLocked){
+      label.textContent = `${field.label}${requiredSuffix} (locked)`;
+      label.classList.add("bulkLockedLabel");
+    }else if(bulkMixed){
+      label.textContent = `${field.label}${requiredSuffix} (multiple)`;
+      label.classList.add("bulkMixedLabel");
+    }else{
+      label.textContent = field.label + requiredSuffix;
+    }
     label.htmlFor = "f_" + field.key;
     box.appendChild(label);
 
+    const mixedToken = "__bulk_multiple__";
     let input;
 
     if(field.type === "select"){
       input = document.createElement("select");
       input.id = "f_" + field.key;
-      const opt0 = document.createElement("option");
-      opt0.value = "";
-      opt0.textContent = "Select...";
-      input.appendChild(opt0);
+      const isNew = editing.mode === "new";
+      if(bulkMixed){
+        const mixedOpt = document.createElement("option");
+        mixedOpt.value = mixedToken;
+        mixedOpt.textContent = "(multiple)";
+        input.appendChild(mixedOpt);
+      }
+      if(!field.required){
+        const noneOpt = document.createElement("option");
+        noneOpt.value = "";
+        noneOpt.textContent = "(none)";
+        input.appendChild(noneOpt);
+      } else if(isNew){
+        const selectOpt = document.createElement("option");
+        selectOpt.value = "";
+        selectOpt.textContent = "Select...";
+        input.appendChild(selectOpt);
+      }
       field.options.forEach(v => {
         const opt = document.createElement("option");
         opt.value = v;
         opt.textContent = v;
         input.appendChild(opt);
       });
-      input.value = data[field.key] ?? "";
+      const baseValue = (data[field.key] == null) ? "" : String(data[field.key]);
+      input.value = bulkMixed ? mixedToken : baseValue;
+      if(bulkMixed){
+        input.classList.add("bulkMixedControl");
+        input.addEventListener("change", () => {
+          if(input.value !== mixedToken){
+            editing.mixedKeys.delete(field.key);
+            input.classList.remove("bulkMixedControl");
+            label.textContent = field.label + requiredSuffix;
+            label.classList.remove("bulkMixedLabel");
+          }
+        });
+      }
     } else if(field.type === "bool"){
       const row = document.createElement("label");
       row.className = "toggle";
@@ -1353,9 +1616,27 @@
       cb.type = "checkbox";
       cb.id = "f_" + field.key;
       cb.checked = !!data[field.key];
+      if(bulkMixed){
+        cb.indeterminate = true;
+        cb.classList.add("bulkMixedControl");
+        cb.addEventListener("change", () => {
+          editing.mixedKeys.delete(field.key);
+          cb.indeterminate = false;
+          cb.classList.remove("bulkMixedControl");
+        });
+      }
+      if(bulkLocked){
+        cb.disabled = true;
+      }
       row.appendChild(cb);
       const t = document.createElement("span");
-      t.textContent = field.label;
+      if(bulkLocked){
+        t.textContent = `${field.label} (locked)`;
+      }else if(bulkMixed){
+        t.textContent = `${field.label} (multiple)`;
+      }else{
+        t.textContent = field.label;
+      }
       row.appendChild(t);
       box.innerHTML = "";
       box.appendChild(row);
@@ -1364,17 +1645,41 @@
       input = document.createElement("input");
       input.id = "f_" + field.key;
       input.type = "text";
-      input.placeholder = field.placeholder || "";
-      input.value = (data[field.key] == null) ? "" : String(data[field.key]);
+      input.placeholder = bulkMixed ? "(multiple)" : (field.placeholder || "");
+      input.value = (bulkMixed || data[field.key] == null) ? "" : String(data[field.key]);
       input.inputMode = "decimal";
+      if(bulkMixed){
+        input.classList.add("bulkMixedControl");
+        input.addEventListener("input", () => {
+          editing.mixedKeys.delete(field.key);
+          input.classList.remove("bulkMixedControl");
+          label.textContent = field.label + requiredSuffix;
+          label.classList.remove("bulkMixedLabel");
+        });
+      }
     } else if(field.type === "json"){
       input = document.createElement("textarea");
       input.id = "f_" + field.key;
-      input.placeholder = field.placeholder || "";
-      input.value = (data[field.key] == null) ? "" : JSON.stringify(data[field.key], null, 2);
+      input.placeholder = bulkMixed ? "(multiple)" : (field.placeholder || "");
+      input.value = (bulkMixed || data[field.key] == null) ? "" : JSON.stringify(data[field.key], null, 2);
+      if(bulkMixed){
+        input.classList.add("bulkMixedControl");
+        input.addEventListener("input", () => {
+          editing.mixedKeys.delete(field.key);
+          input.classList.remove("bulkMixedControl");
+          label.textContent = field.label + requiredSuffix;
+          label.classList.remove("bulkMixedLabel");
+        });
+      }
     } else if(field.type === "relation"){
       input = document.createElement("select");
       input.id = "f_" + field.key;
+      if(bulkMixed){
+        const mixedOpt = document.createElement("option");
+        mixedOpt.value = mixedToken;
+        mixedOpt.textContent = "(multiple)";
+        input.appendChild(mixedOpt);
+      }
 
       const opt0 = document.createElement("option");
       opt0.value = "";
@@ -1388,15 +1693,39 @@
         opt.textContent = `${cat.name}  —  ${cat.kind}`;
         input.appendChild(opt);
       });
-      input.value = data[field.key] ?? "";
+      input.value = bulkMixed ? mixedToken : (data[field.key] ?? "");
+      if(bulkMixed){
+        input.classList.add("bulkMixedControl");
+        input.addEventListener("change", () => {
+          if(input.value !== mixedToken){
+            editing.mixedKeys.delete(field.key);
+            input.classList.remove("bulkMixedControl");
+            label.textContent = field.label + requiredSuffix;
+            label.classList.remove("bulkMixedLabel");
+          }
+        });
+      }
     } else {
       input = document.createElement("input");
       input.id = "f_" + field.key;
       input.type = "text";
-      input.placeholder = field.placeholder || "";
-      input.value = data[field.key] ?? "";
+      input.placeholder = bulkMixed ? "(multiple)" : (field.placeholder || "");
+      input.value = bulkMixed ? "" : (data[field.key] ?? "");
+      if(bulkMixed){
+        input.classList.add("bulkMixedControl");
+        input.addEventListener("input", () => {
+          editing.mixedKeys.delete(field.key);
+          input.classList.remove("bulkMixedControl");
+          label.textContent = field.label + requiredSuffix;
+          label.classList.remove("bulkMixedLabel");
+        });
+      }
     }
 
+    if(bulkLocked){
+      input.disabled = true;
+      input.classList.add("bulkLockedControl");
+    }
     box.appendChild(input);
     return box;
   }
@@ -1405,7 +1734,10 @@
     const schema = SCHEMA[activeTab];
     editing.mode = mode;
     editing.id = mode === "edit" ? record.id : null;
+    editing.ids = [];
     editing.data = mode === "edit" ? record : {};
+    editing.mixedKeys = new Set();
+    editing.lockedKeys = new Set();
 
     $("#modalTitle").textContent = (mode === "edit" ? "Edit " : "New ") + schema.label.slice(0,-1);
     $("#recordMeta").textContent = mode === "edit"
@@ -1434,14 +1766,25 @@
 
   function readEditorBody(){
     const schema = SCHEMA[activeTab];
+    const isBulk = editing.mode === "bulk";
+    const isNew = editing.mode === "new";
+    const mixedToken = "__bulk_multiple__";
     const out = {};
     for(const f of schema.fields){
+      if(isBulk && editing.lockedKeys.has(f.key)) continue;
+      if(isBulk && editing.mixedKeys.has(f.key)) continue;
+
       const id = "#f_" + f.key;
       if(f.type === "bool"){
-        out[f.key] = $(id).checked;
+        const cb = $(id);
+        if(!cb) continue;
+        if(isBulk && cb.indeterminate) continue;
+        out[f.key] = cb.checked;
         continue;
       }
       const el = $(id);
+      if(!el) continue;
+      if(isBulk && (el.value || "") === mixedToken) continue;
       const raw = (el?.value ?? "").trim();
 
       if(f.type === "select"){
@@ -1465,7 +1808,7 @@
         out[f.key] = v || null;
       }
 
-      if(f.required){
+      if(f.required && (!isBulk || Object.prototype.hasOwnProperty.call(out, f.key))){
         const v = out[f.key];
         if(v === null || v === "" || v === undefined){
           throw new Error(`${f.label} is required.`);
@@ -1474,8 +1817,12 @@
     }
 
     if("meta" in out && out.meta === null) delete out.meta;
-    if(activeTab === "categories" && out.parent === null) delete out.parent;
-    ["institution","name","symbol","card_category"].forEach(k => { if(out[k] === null) delete out[k]; });
+    if(isNew && activeTab === "categories" && out.parent === null) delete out.parent;
+    if(isNew){
+      ["institution","name","symbol","card_category"].forEach((k) => {
+        if(out[k] === null) delete out[k];
+      });
+    }
 
     return out;
   }
@@ -1491,6 +1838,7 @@
       assetEntryCounts = new Map();
       categoryEntryCounts = new Map();
       payeeTxnCounts = new Map();
+      payeeNewestTxnDates = new Map();
       payeeIdsByCategory = new Map();
 
       const catsAllRes = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false, page:1, perPage:500 });
@@ -1509,6 +1857,7 @@
       assetEntryCounts = stats.assetMap;
       categoryEntryCounts = stats.categoryMap;
       payeeTxnCounts = stats.payeeMap;
+      payeeNewestTxnDates = stats.payeeNewestTxnDateMap || new Map();
       payeeIdsByCategory = stats.payeeIdsByCategoryMap || new Map();
 
       const paging = tablePagingStateForTab(activeTab);
@@ -1634,6 +1983,31 @@
       if(editing.mode === "new"){
         await createRecord(activeTab, body);
         toast("ok", "Created", `${schema.label.slice(0,-1)} created.`);
+      } else if(editing.mode === "bulk"){
+        const ids = Array.isArray(editing.ids) ? editing.ids.slice() : [];
+        if(!ids.length){
+          throw new Error("No selected rows found for bulk edit.");
+        }
+        if(!Object.keys(body).length){
+          throw new Error("No bulk changes to apply. Set at least one field.");
+        }
+        let done = 0;
+        let failed = 0;
+        let firstErr = "";
+        for(const id of ids){
+          try{
+            await updateRecord(activeTab, id, body);
+            done += 1;
+          }catch(e){
+            failed += 1;
+            if(!firstErr) firstErr = e?.message || String(e);
+          }
+        }
+        if(failed){
+          toast("bad", "Bulk edit partial", `Updated ${done} row(s), failed ${failed}.` + (firstErr ? ` First error: ${firstErr}` : ""));
+        }else{
+          toast("ok", "Bulk updated", `Updated ${done} ${schema.label.toLowerCase()}.`);
+        }
       } else {
         await updateRecord(activeTab, editing.id, body);
         toast("ok", "Saved", `${schema.label.slice(0,-1)} updated.`);
