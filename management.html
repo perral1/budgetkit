@@ -10,6 +10,8 @@
       --line:#223044; --accent:#7aa8ff; --danger:#ff6b6b; --ok:#3ddc97; --warn:#ffd166;
       --shadow: 0 12px 40px rgba(0,0,0,.35);
       --radius:14px;
+      --sticky-offset:84px;
+      --panel-head-height:56px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
     }
@@ -70,25 +72,40 @@
       margin-top:12px;
       border:1px solid var(--line); border-radius:var(--radius);
       background:rgba(15,22,32,.7); box-shadow:var(--shadow);
-      overflow:hidden;
+      overflow:visible;
     }
     .panelHead{
       display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;
       padding:12px 14px; border-bottom:1px solid var(--line); background:rgba(18,28,41,.6);
+      position:sticky;
+      top:var(--sticky-offset);
+      z-index:45;
+      backdrop-filter: blur(8px);
     }
     .panelHead .left{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .panelHead .right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .panelHead .hint{ font-size:12px; color:var(--muted); }
     .searchRow{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .tableWrap{ overflow:auto; }
+    .tableWrap{ overflow:visible; }
     table{ width:100%; border-collapse:collapse; }
     th, td{ padding:10px 12px; border-bottom:1px solid rgba(34,48,68,.75); vertical-align:top; }
     th{ text-align:left; font-size:12px; color:var(--muted); letter-spacing:.3px; text-transform:uppercase; }
+    #table thead th{
+      position:sticky;
+      top:calc(var(--sticky-offset) + var(--panel-head-height));
+      z-index:44;
+      background:rgba(18,28,41,.92);
+    }
     th.sortable{ cursor:pointer; user-select:none; }
     th.sortable:hover{ color:var(--text); }
     th.sorted-asc::after{ content:" \2191"; color:var(--accent); }
     th.sorted-desc::after{ content:" \2193"; color:var(--accent); }
     td{ font-size:13px; }
+    tr.selectableRow{ cursor:pointer; }
+    tr.selectableRow.selected{ background:rgba(122,168,255,.12); }
+    tr.selectableRow:hover{ background:rgba(122,168,255,.08); }
+    .selectionCell{ width:40px; text-align:center; }
+    .selectionCell input{ width:16px; height:16px; }
     .mono{ font-family:var(--mono); font-size:12px; color:var(--muted); }
     .pill{
       display:inline-flex; align-items:center; gap:6px;
@@ -99,6 +116,13 @@
     .pill.warn{ border-color:rgba(255,209,102,.35); background:rgba(255,209,102,.10); color:#ffe6b3; }
     .actions{ display:flex; gap:8px; align-items:center; }
     .actions .btn{ padding:7px 10px; font-weight:700; }
+    .bulkActions{
+      display:none;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .bulkActions.active{ display:flex; }
     .empty{
       padding:22px 14px; color:var(--muted);
     }
@@ -220,6 +244,7 @@
         <div class="left">
           <button class="btn primary" id="btnNew">+ New</button>
           <button class="btn" id="btnRefresh">Refresh</button>
+          <div class="bulkActions" id="bulkActions"></div>
           <span class="hint" id="hint">List + CRUD for the selected collection.</span>
         </div>
         <div class="right">
@@ -489,8 +514,7 @@
         { key:"entry_count", label:"Entries", render:"accountEntryCount", mono:true },
         { key:"balance_current", label:"Current", render:"accountCurrentBalance", mono:true },
         { key:"balance_cleared", label:"Cleared", render:"accountClearedBalance", mono:true },
-        { key:"is_archived", label:"Archived", pillBool:true },
-        { key:"id", label:"ID", mono:true }
+        { key:"is_archived", label:"Archived", pillBool:true }
       ]
     },
     assets: {
@@ -509,8 +533,7 @@
         { key:"symbol", label:"Symbol", pill:true },
         { key:"name", label:"Name" },
         { key:"precision", label:"Precision" },
-        { key:"entry_count", label:"Entries", render:"assetEntryCount", mono:true },
-        { key:"id", label:"ID", mono:true }
+        { key:"entry_count", label:"Entries", render:"assetEntryCount", mono:true }
       ]
     },
     categories: {
@@ -533,8 +556,7 @@
         { key:"kind", label:"Kind", pill:true },
         { key:"parent", label:"Parent", render:"parentName" },
         { key:"entry_count", label:"Entries", render:"categoryEntryCount", mono:true },
-        { key:"is_archived", label:"Archived", pillBool:true },
-        { key:"id", label:"ID", mono:true }
+        { key:"is_archived", label:"Archived", pillBool:true }
       ]
     },
     payees: {
@@ -554,8 +576,7 @@
         { key:"name", label:"Name" },
         { key:"card_category", label:"Card Category", pill:true },
         { key:"txn_count", label:"Txns", render:"payeeTxnCount", mono:true },
-        { key:"is_archived", label:"Archived", pillBool:true },
-        { key:"id", label:"ID", mono:true }
+        { key:"is_archived", label:"Archived", pillBool:true }
       ]
     }
   };
@@ -579,6 +600,12 @@
     assets: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
     categories: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 },
     payees: { page: 1, perPage: 50, totalPages: 1, totalItems: 0 }
+  };
+  const selectedRowIds = {
+    accounts: new Set(),
+    assets: new Set(),
+    categories: new Set(),
+    payees: new Set()
   };
 
   function fmtBalance(n){
@@ -744,6 +771,220 @@
     return true;
   }
 
+  function selectedSetForTab(tab){
+    if(!selectedRowIds[tab]) selectedRowIds[tab] = new Set();
+    return selectedRowIds[tab];
+  }
+
+  function selectedRowsForActiveTab(){
+    const selected = selectedSetForTab(activeTab);
+    return records.filter(r => selected.has(String(r.id || "")));
+  }
+
+  function hasArchiveFlag(tab){
+    return tab === "accounts" || tab === "categories" || tab === "payees";
+  }
+
+  function pruneSelectionToVisibleRows(){
+    const selected = selectedSetForTab(activeTab);
+    const visible = new Set(records.map(r => String(r.id || "")));
+    Array.from(selected).forEach(id => {
+      if(!visible.has(id)) selected.delete(id);
+    });
+  }
+
+  async function applyArchiveSelection(nextArchived){
+    const schema = SCHEMA[activeTab];
+    const selectedRows = selectedRowsForActiveTab();
+    const targets = selectedRows.filter(r => !!r.is_archived !== !!nextArchived);
+    if(!targets.length){
+      toast("ok", "No changes", nextArchived ? "Selected rows are already archived." : "No selected archived rows to unarchive.");
+      return;
+    }
+    let done = 0;
+    for(const row of targets){
+      await updateRecord(activeTab, row.id, { is_archived: !!nextArchived });
+      done += 1;
+    }
+    toast("ok", "Updated", `${done} ${schema.label.toLowerCase()} ${nextArchived ? "archived" : "unarchived"}.`);
+    refresh();
+  }
+
+  async function deleteSelectedRows(){
+    const schema = SCHEMA[activeTab];
+    const selectedRows = selectedRowsForActiveTab();
+    if(!selectedRows.length){
+      toast("bad", "Nothing selected", "Select one or more rows first.");
+      return;
+    }
+    if(!selectedRows.every(r => canDeleteFromRow(activeTab, r))){
+      toast("bad", "Delete blocked", "Delete is only available when all selected rows are deletable.");
+      return;
+    }
+    let done = 0;
+    for(const row of selectedRows){
+      await deleteRecord(activeTab, row.id);
+      done += 1;
+    }
+    toast("ok", "Deleted", `${done} ${schema.label.toLowerCase()} deleted.`);
+    refresh();
+  }
+
+  async function mergeSelectedPayees(){
+    if(activeTab !== "payees"){
+      toast("bad", "Merge unavailable", "Merge is only available for payees.");
+      return;
+    }
+    const selectedRows = selectedRowsForActiveTab();
+    if(selectedRows.length < 2){
+      toast("bad", "Select payees", "Select at least two payees to merge.");
+      return;
+    }
+
+    const [target, ...sources] = selectedRows;
+    const sourceIds = new Set(sources.map(r => String(r.id || "")).filter(Boolean));
+    if(!sourceIds.size){
+      toast("bad", "Merge unavailable", "No merge sources found.");
+      return;
+    }
+
+    const targetLabel = target.name || target.id;
+    const confirmMsg = `Merge ${selectedRows.length} payees into "${targetLabel}"? Transactions from ${sources.length} selected payee(s) will be moved, then the other selected payees will be deleted.`;
+    if(!window.confirm(confirmMsg)) return;
+
+    let moved = 0;
+    let moveFailed = 0;
+    let deleted = 0;
+    let deleteFailed = 0;
+    let firstError = "";
+
+    const allTxns = await listAllTxnsForStats();
+    const txnsToMove = allTxns.filter(t => sourceIds.has(String(t?.payee || "")));
+
+    for(const txn of txnsToMove){
+      try{
+        await updateRecord("txns", txn.id, { payee: target.id });
+        moved += 1;
+      }catch(e){
+        moveFailed += 1;
+        if(!firstError) firstError = e?.message || String(e);
+      }
+    }
+
+    for(const source of sources){
+      try{
+        await deleteRecord("payees", source.id);
+        deleted += 1;
+      }catch(e){
+        deleteFailed += 1;
+        if(!firstError) firstError = e?.message || String(e);
+      }
+    }
+
+    if(moveFailed || deleteFailed){
+      toast(
+        "bad",
+        "Merge completed with errors",
+        `Moved ${moved} txn(s), failed ${moveFailed}. Deleted ${deleted} payee(s), failed ${deleteFailed}.` + (firstError ? ` First error: ${firstError}` : "")
+      );
+    }else{
+      toast("ok", "Merge complete", `Moved ${moved} txn(s) to "${targetLabel}" and deleted ${deleted} payee(s).`);
+    }
+    refresh();
+  }
+
+  function renderBulkActions(){
+    const wrap = $("#bulkActions");
+    if(!wrap) return;
+    wrap.innerHTML = "";
+    const selected = selectedRowsForActiveTab();
+    if(!selected.length){
+      wrap.classList.remove("active");
+      syncStickyOffsets();
+      return;
+    }
+
+    const selectedCount = document.createElement("span");
+    selectedCount.className = "mono";
+    selectedCount.textContent = `${selected.length} selected`;
+    wrap.appendChild(selectedCount);
+
+    if(selected.length === 1){
+      const btnEdit = document.createElement("button");
+      btnEdit.className = "btn";
+      btnEdit.textContent = "Edit";
+      btnEdit.addEventListener("click", () => openEditor("edit", selected[0]));
+      wrap.appendChild(btnEdit);
+    }
+
+    if(hasArchiveFlag(activeTab)){
+      const btnArchive = document.createElement("button");
+      btnArchive.className = "btn";
+      btnArchive.textContent = "Archive";
+      btnArchive.addEventListener("click", async () => {
+        try{
+          await applyArchiveSelection(true);
+        }catch(e){
+          toast("bad", "Update failed", e.message || String(e));
+        }
+      });
+      wrap.appendChild(btnArchive);
+
+      if(selected.some(r => !!r.is_archived)){
+        const btnUnarchive = document.createElement("button");
+        btnUnarchive.className = "btn";
+        btnUnarchive.textContent = "Unarchive";
+        btnUnarchive.addEventListener("click", async () => {
+          try{
+            await applyArchiveSelection(false);
+          }catch(e){
+            toast("bad", "Update failed", e.message || String(e));
+          }
+        });
+        wrap.appendChild(btnUnarchive);
+      }
+    }
+
+    if(selected.every(r => canDeleteFromRow(activeTab, r))){
+      const btnDelete = document.createElement("button");
+      btnDelete.className = "btn danger";
+      btnDelete.textContent = "Delete";
+      btnDelete.addEventListener("click", async () => {
+        try{
+          await deleteSelectedRows();
+        }catch(e){
+          toast("bad", "Delete failed", e.message || String(e));
+        }
+      });
+      wrap.appendChild(btnDelete);
+    }
+
+    if(activeTab === "payees" && selected.length >= 2){
+      const btnMerge = document.createElement("button");
+      btnMerge.className = "btn";
+      btnMerge.textContent = "Merge";
+      btnMerge.addEventListener("click", async () => {
+        try{
+          await mergeSelectedPayees();
+        }catch(e){
+          toast("bad", "Merge failed", e.message || String(e));
+        }
+      });
+      wrap.appendChild(btnMerge);
+    }
+    wrap.classList.add("active");
+    syncStickyOffsets();
+  }
+
+  function syncStickyOffsets(){
+    const topbar = $(".topbar");
+    const panelHead = $(".panelHead");
+    const stickyTop = topbar ? Math.ceil(topbar.offsetHeight + 12) : 12;
+    const headHeight = panelHead ? Math.ceil(panelHead.offsetHeight) : 64;
+    document.documentElement.style.setProperty("--sticky-offset", stickyTop + "px");
+    document.documentElement.style.setProperty("--panel-head-height", headHeight + "px");
+  }
+
   function serverSortExprForActiveTab(){
     const schema = SCHEMA[activeTab];
     const sortState = tableSortStateForTab(activeTab);
@@ -838,6 +1079,8 @@
     $("#q").value = "";
     $("#showArchived").checked = false;
     $("#onlyArchived").checked = false;
+    selectedSetForTab(activeTab).clear();
+    renderBulkActions();
     refresh();
   }
 
@@ -854,6 +1097,29 @@
     tbody.innerHTML = "";
 
     const trh = document.createElement("tr");
+    const thSel = document.createElement("th");
+    thSel.className = "selectionCell";
+    const allCb = document.createElement("input");
+    allCb.type = "checkbox";
+    allCb.title = "Select all rows on this page";
+    const selectedIds = selectedSetForTab(activeTab);
+    const visibleIds = records.map(r => String(r.id || ""));
+    const selectedVisible = visibleIds.filter(id => selectedIds.has(id)).length;
+    allCb.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length;
+    allCb.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
+    allCb.addEventListener("change", () => {
+      const checked = allCb.checked;
+      if(checked){
+        records.forEach(r => selectedIds.add(String(r.id || "")));
+      }else{
+        records.forEach(r => selectedIds.delete(String(r.id || "")));
+      }
+      renderTable();
+      renderBulkActions();
+    });
+    thSel.appendChild(allCb);
+    trh.appendChild(thSel);
+
     schema.columns.forEach(c => {
       const th = document.createElement("th");
       th.textContent = c.label;
@@ -867,16 +1133,33 @@
       th.addEventListener("click", () => toggleTableSort(c.key));
       trh.appendChild(th);
     });
-    const thA = document.createElement("th");
-    thA.textContent = "Actions";
-    trh.appendChild(thA);
     thead.appendChild(trh);
 
     $("#empty").style.display = records.length ? "none" : "block";
 
     const sortedRows = sortedRecordsForTable(schema);
+    const selected = selectedSetForTab(activeTab);
     sortedRows.forEach(r => {
       const tr = document.createElement("tr");
+      tr.classList.add("selectableRow");
+      const rowId = String(r.id || "");
+      if(selected.has(rowId)) tr.classList.add("selected");
+
+      const tdSel = document.createElement("td");
+      tdSel.className = "selectionCell";
+      const rowCb = document.createElement("input");
+      rowCb.type = "checkbox";
+      rowCb.checked = selected.has(rowId);
+      rowCb.addEventListener("click", (e) => e.stopPropagation());
+      rowCb.addEventListener("change", () => {
+        if(rowCb.checked) selected.add(rowId);
+        else selected.delete(rowId);
+        renderTable();
+        renderBulkActions();
+      });
+      tdSel.appendChild(rowCb);
+      tr.appendChild(tdSel);
+
       schema.columns.forEach(c => {
         const td = document.createElement("td");
         if(c.render === "parentName"){
@@ -916,57 +1199,13 @@
         }
         tr.appendChild(td);
       });
-
-      const tdA = document.createElement("td");
-      const wrap = document.createElement("div");
-      wrap.className = "actions";
-
-      const btnEdit = document.createElement("button");
-      btnEdit.className = "btn";
-      btnEdit.textContent = "Edit";
-      btnEdit.addEventListener("click", () => openEditor("edit", r));
-      wrap.appendChild(btnEdit);
-
-      if(activeTab === "accounts" || activeTab === "categories" || activeTab === "payees"){
-        const btnArch = document.createElement("button");
-        btnArch.className = "btn";
-        btnArch.textContent = r.is_archived ? "Unarchive" : "Archive";
-        btnArch.addEventListener("click", async () => {
-          try{
-            await updateRecord(activeTab, r.id, { is_archived: !r.is_archived });
-            toast("ok", "Updated", `${schema.label.slice(0,-1)} ${r.id} ${r.is_archived ? "unarchived" : "archived"}.`);
-            refresh();
-          }catch(e){
-            toast("bad", "Update failed", e.message || String(e));
-          }
-        });
-        wrap.appendChild(btnArch);
-      }
-
-      if(canDeleteFromRow(activeTab, r)){
-        const btnDel = document.createElement("button");
-        btnDel.className = "btn danger";
-        btnDel.textContent = "Delete";
-        btnDel.addEventListener("click", async () => {
-          const linkedEntries = entriesCountForRecord(activeTab, r);
-          if(linkedEntries > 0){
-            const refLabel = activeTab === "payees" ? "transactions" : "entries";
-            toast("bad", "Delete blocked", "Cannot delete while " + refLabel + " reference this record.");
-            return;
-          }
-          try{
-            await deleteRecord(activeTab, r.id);
-            toast("ok", "Deleted", `${schema.label.slice(0,-1)} ${r.id} deleted.`);
-            refresh();
-          }catch(e){
-            toast("bad", "Delete failed", e.message || String(e));
-          }
-        });
-        wrap.appendChild(btnDel);
-      }
-
-      tdA.appendChild(wrap);
-      tr.appendChild(tdA);
+      tr.addEventListener("click", (e) => {
+        if(e.target && e.target.closest && e.target.closest("button,a,input,select,textarea,label")) return;
+        if(selected.has(rowId)) selected.delete(rowId);
+        else selected.add(rowId);
+        renderTable();
+        renderBulkActions();
+      });
       tbody.appendChild(tr);
     });
     updatePagerUI();
@@ -1062,7 +1301,7 @@
 
     $("#modalTitle").textContent = (mode === "edit" ? "Edit " : "New ") + schema.label.slice(0,-1);
     $("#recordMeta").textContent = mode === "edit"
-      ? `id=${record.id}  created=${fmtDate(record.created)}  updated=${fmtDate(record.updated)}`
+      ? `created=${fmtDate(record.created)}  updated=${fmtDate(record.updated)}`
       : "";
 
     const grid = $("#formGrid");
@@ -1182,11 +1421,15 @@
       paging.totalPages = listRes.totalPages;
       paging.totalItems = listRes.totalItems;
       records = listRes.items || [];
+      pruneSelectionToVisibleRows();
       renderTable();
+      renderBulkActions();
       updatePagerUI();
     }catch(e){
       records = [];
+      selectedSetForTab(activeTab).clear();
       renderTable();
+      renderBulkActions();
       updatePagerUI();
       toast("bad", "Refresh failed", e.message || String(e));
     }finally{
@@ -1253,11 +1496,11 @@
       const body = readEditorBody();
 
       if(editing.mode === "new"){
-        const created = await createRecord(activeTab, body);
-        toast("ok", "Created", `${schema.label.slice(0,-1)} ${created?.id || ""} created.`);
+        await createRecord(activeTab, body);
+        toast("ok", "Created", `${schema.label.slice(0,-1)} created.`);
       } else {
         await updateRecord(activeTab, editing.id, body);
-        toast("ok", "Saved", `${schema.label.slice(0,-1)} ${editing.id} updated.`);
+        toast("ok", "Saved", `${schema.label.slice(0,-1)} updated.`);
       }
 
       showModal(false);
@@ -1285,6 +1528,7 @@
     const logout = $("#logoutLink");
     if(authPanel) authPanel.style.display = isLoggedIn ? "none" : "flex";
     if(logout) logout.style.display = isLoggedIn ? "inline" : "none";
+    syncStickyOffsets();
   }
 
   async function validateCachedSession(){
@@ -1313,10 +1557,12 @@
     $("#pbPass").value = "";
     setLoggedInUI(false);
     records = [];
+    selectedSetForTab(activeTab).clear();
     tablePagingStateForTab(activeTab).page = 1;
     tablePagingStateForTab(activeTab).totalPages = 1;
     tablePagingStateForTab(activeTab).totalItems = 0;
     renderTable();
+    renderBulkActions();
     updatePagerUI();
     toast("ok", "Logged out", "Local session cleared.");
   });
@@ -1370,6 +1616,8 @@
   $("#pbUrl").value = store.get("pbUrl", "");
   $("#pbEmail").value = store.get("pbEmail", "");
   updatePagerUI();
+  syncStickyOffsets();
+  window.addEventListener("resize", syncStickyOffsets);
 
   // On load: if URL + token exist, validate them; if valid hide login; else show login
   (async () => {
@@ -1391,6 +1639,8 @@
     setLoggedInUI(false);
     records = [];
     renderTable();
+    renderBulkActions();
+    syncStickyOffsets();
     updatePagerUI();
     toast("bad", "Not logged in", "Enter URL, email, password and click Login.");
   })();

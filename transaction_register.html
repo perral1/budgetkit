@@ -297,6 +297,11 @@
               <select id="fltAccount"></select>
             </div>
             <div class="field">
+              <label for="fltPayee">Payee</label>
+              <input id="fltPayee" type="text" list="payeeFilterSuggestions" placeholder="Search payee name" />
+              <datalist id="payeeFilterSuggestions"></datalist>
+            </div>
+            <div class="field">
               <label for="fltCategory">Category</label>
               <select id="fltCategory"></select>
             </div>
@@ -645,7 +650,7 @@
           const el = $(sel);
           if (el) el.disabled = disabled && sel !== "#btnLogin";
         });
-        ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
+        ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltPayee", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
           const el = $(sel);
           if (el) el.disabled = disabled;
         });
@@ -669,15 +674,44 @@
         sel.value = current;
       }
 
+      function refillPayeeFilterSuggestions() {
+        const datalist = $("#payeeFilterSuggestions");
+        if (!datalist) return;
+        datalist.innerHTML = state.payees
+          .map((p) => String((p && p.name) || "").trim())
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b))
+          .map((name) => '<option value="' + escapeHtml(name) + '"></option>')
+          .join("");
+      }
+
+      function findPayeeIdsByName(rawQuery) {
+        const q = String(rawQuery == null ? "" : rawQuery).trim().toLowerCase();
+        if (!q) return [];
+        return state.payees
+          .filter((p) => String((p && p.name) || "").toLowerCase().includes(q))
+          .map((p) => String((p && p.id) || ""))
+          .filter(Boolean);
+      }
+
       function buildEntriesFilter() {
         const out = [];
         const account = $("#fltAccount").value;
+        const payee = $("#fltPayee").value;
         const category = $("#fltCategory").value;
         const status = $("#fltStatus").value;
         const from = $("#fltFrom").value;
         const to = $("#fltTo").value;
 
         if (account) out.push('account = "' + account.replaceAll('"', '\\"') + '"');
+        if (payee) {
+          const payeeIds = findPayeeIdsByName(payee);
+          if (!payeeIds.length) {
+            out.push('txn.payee = "__no_payee_name_match__"');
+          } else {
+            out.push("(" + payeeIds.map((id) => 'txn.payee = "' + id.replaceAll('"', '\\"') + '"').join(" || ") + ")");
+          }
+        }
         if (category) out.push('category = "' + category.replaceAll('"', '\\"') + '"');
         if (status) out.push('status = "' + status.replaceAll('"', '\\"') + '"');
         if (from) out.push('date >= "' + normalizeDateToNoonUtc(from) + '"');
@@ -715,6 +749,7 @@
 
         refillFilterSelect("#fltAccount", state.accounts, "(all accounts)", (a) => accountLabel(a, false));
         refillFilterSelect("#fltCategory", state.categories, "(all categories)", (c) => categoryLabel(c, false));
+        refillPayeeFilterSuggestions();
       }
 
       async function loadRegister() {
@@ -1998,11 +2033,19 @@
       $("#btnEditSave").addEventListener("click", saveInlineEdit);
       $("#btnEditCancel").addEventListener("click", cancelInlineEdit);
 
-      ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
+      ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltPayee", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
         $(sel).addEventListener("change", function() {
           state.page = 1;
           refreshAll();
         });
+      });
+      let payeeFilterInputTimer = 0;
+      $("#fltPayee").addEventListener("input", function() {
+        clearTimeout(payeeFilterInputTimer);
+        payeeFilterInputTimer = setTimeout(function() {
+          state.page = 1;
+          refreshAll();
+        }, 250);
       });
 
       $("#btnPrevPage").addEventListener("click", function() {
