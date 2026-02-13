@@ -112,6 +112,16 @@
       margin-bottom: 10px;
     }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    #registerTable {
+      min-width: 598px;
+    }
+    #registerTable col.col-date { width: 88px; min-width: 88px; }
+    #registerTable col.col-account { width: 88px; min-width: 88px; }
+    #registerTable col.col-payee { width: 50%; min-width: 100px; }
+    #registerTable col.col-category { width: 150px; min-width: 150px; }
+    #registerTable col.col-memo { width: 50%; min-width: 20px; }
+    #registerTable col.col-amount { width: 110px; min-width: 110px; }
+    #registerTable col.col-status { width: 42px; min-width: 42px; }
     th, td {
       border-bottom: 1px solid rgba(42, 58, 82, 0.75);
       padding: 9px 8px;
@@ -122,11 +132,16 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    #registerTable th:nth-child(4),
+    #registerTable td:nth-child(4) {
+      text-overflow: clip;
+    }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.2px; }
     th.sortable { cursor: pointer; user-select: none; }
     th.sortable:hover { color: var(--text); }
     th.sorted-asc::after { content: " \2191"; color: var(--accent); }
     th.sorted-desc::after { content: " \2193"; color: var(--accent); }
+    th.amountHead { text-align: right; }
     tr.selected { background: rgba(110, 193, 255, 0.08); }
     tr.txn-parent td {
       background: rgba(110, 193, 255, 0.06);
@@ -347,16 +362,16 @@
             </div>
           </div>
 
-          <div style="overflow:auto;">
+          <div class="registerTableWrap" style="overflow:auto;">
             <table id="registerTable">
               <colgroup>
-                <col style="width:11%;" />
-                <col style="width:18%;" />
-                <col style="width:14%;" />
-                <col style="width:16%;" />
-                <col style="width:17%;" />
-                <col style="width:13%;" />
-                <col style="width:9%;" />
+                <col class="col-date" />
+                <col class="col-account" />
+                <col class="col-payee" />
+                <col class="col-category" />
+                <col class="col-memo" />
+                <col class="col-amount" />
+                <col class="col-status" />
               </colgroup>
               <thead>
                 <tr>
@@ -365,8 +380,8 @@
                   <th data-sort="payee">Payee</th>
                   <th data-sort="category">Category</th>
                   <th data-sort="memo">Memo</th>
-                  <th data-sort="amount">Amount</th>
-                  <th data-sort="status">Status</th>
+                  <th data-sort="amount" class="amountHead">Amount</th>
+                  <th data-sort="status"></th>
                 </tr>
               </thead>
               <tbody id="registerBody"></tbody>

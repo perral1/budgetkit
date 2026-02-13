@@ -1,0 +1,759 @@
+[
+  {
+    "id": "pbc_2324088501",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "accounts",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text1579384326",
+        "max": 0,
+        "min": 0,
+        "name": "name",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "select2363381545",
+        "maxSelect": 1,
+        "name": "type",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "select",
+        "values": [
+          "bank",
+          "credit",
+          "cash",
+          "virtual",
+          "roth",
+          "pretax",
+          "hsa",
+          "brokerage"
+        ]
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text983537893",
+        "max": 0,
+        "min": 0,
+        "name": "institution",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "bool4095221754",
+        "name": "is_archived",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "bool"
+      },
+      {
+        "hidden": false,
+        "id": "json3622966325",
+        "maxSize": 0,
+        "name": "meta",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX `type` ON `accounts` (`type`)",
+      "CREATE INDEX `is_archived` ON `accounts` (`is_archived`)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_1321337024",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "assets",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3972544249",
+        "max": 0,
+        "min": 0,
+        "name": "symbol",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text1579384326",
+        "max": 0,
+        "min": 0,
+        "name": "name",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "number1307610870",
+        "max": null,
+        "min": null,
+        "name": "precision",
+        "onlyInt": false,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "hidden": false,
+        "id": "json3622966325",
+        "maxSize": 0,
+        "name": "meta",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [
+      "CREATE UNIQUE INDEX `symbol` ON `assets` (`symbol`)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_1938316646",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "budget_lines",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text2394296326",
+        "max": 0,
+        "min": 0,
+        "name": "month",
+        "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_3292755704",
+        "hidden": false,
+        "id": "relation105650625",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "category",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "hidden": false,
+        "id": "number4238253100",
+        "max": null,
+        "min": null,
+        "name": "budgeted",
+        "onlyInt": false,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3485334036",
+        "max": 0,
+        "min": 0,
+        "name": "note",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json3622966325",
+        "maxSize": 0,
+        "name": "meta",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [
+      "CREATE UNIQUE INDEX `idx_mPKQnCDLRa` ON `budget_lines` (\n  `month`,\n  `category`\n)",
+      "CREATE INDEX `idx_zX3FgQw26N` ON `budget_lines` (`month`)",
+      "CREATE INDEX `idx_0ooxm3qgnR` ON `budget_lines` (\n  `category`,\n  `month`\n)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_3292755704",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "categories",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text1579384326",
+        "max": 0,
+        "min": 0,
+        "name": "name",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_3292755704",
+        "hidden": false,
+        "id": "relation1032740943",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "parent",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "hidden": false,
+        "id": "select1002749145",
+        "maxSelect": 1,
+        "name": "kind",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "select",
+        "values": [
+          "income",
+          "expense",
+          "transfer",
+          "trade",
+          "fee"
+        ]
+      },
+      {
+        "hidden": false,
+        "id": "bool4095221754",
+        "name": "is_archived",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "bool"
+      },
+      {
+        "hidden": false,
+        "id": "json3622966325",
+        "maxSize": 0,
+        "name": "meta",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX `idx_bhhrV2Flvo` ON `categories` (`kind`)",
+      "CREATE INDEX `idx_SKfpecZ58v` ON `categories` (`is_archived`)",
+      "CREATE INDEX `idx_9boDnPYbc2` ON `categories` (`parent`)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_3165375535",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "entries",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_23239598402",
+        "hidden": false,
+        "id": "relation3780486719",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "txn",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "hidden": false,
+        "id": "date2862495610",
+        "max": "",
+        "min": "",
+        "name": "date",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "date"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_2324088501",
+        "hidden": false,
+        "id": "relation2100713124",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "account",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_3292755704",
+        "hidden": false,
+        "id": "relation105650625",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "category",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_1321337024",
+        "hidden": false,
+        "id": "relation45046364",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "asset",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "hidden": false,
+        "id": "number3371740703",
+        "max": null,
+        "min": null,
+        "name": "qty",
+        "onlyInt": true,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text2873790506",
+        "max": 0,
+        "min": 0,
+        "name": "memo",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "select2063623452",
+        "maxSelect": 1,
+        "name": "status",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "select",
+        "values": [
+          "pending",
+          "cleared"
+        ]
+      },
+      {
+        "hidden": false,
+        "id": "json3622966325",
+        "maxSize": 0,
+        "name": "meta",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX `idx_oxVcKkcSUZ` ON `entries` (\n  `account`,\n  `date`\n)",
+      "CREATE INDEX `idx_PeGKJGkGTU` ON `entries` (\n  `category`,\n  `date`\n)",
+      "CREATE INDEX `idx_lqbKoMs1QS` ON `entries` (\n  `asset`,\n  `date`\n)",
+      "CREATE INDEX `idx_BRRJ2T6j5j` ON `entries` (\n  `status`,\n  `date`\n)",
+      "CREATE INDEX `idx_OoeSUdrF1y` ON `entries` (`txn`)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_2685195880",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "payees",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text1579384326",
+        "max": 0,
+        "min": 0,
+        "name": "name",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "select3212695362",
+        "maxSelect": 1,
+        "name": "card_category",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "select",
+        "values": [
+          "restaurant",
+          "intlrest",
+          "grocery",
+          "airlines",
+          "hotel",
+          "rental",
+          "parking",
+          "toll",
+          "taxi"
+        ]
+      },
+      {
+        "hidden": false,
+        "id": "bool4095221754",
+        "name": "is_archived",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "bool"
+      }
+    ],
+    "indexes": [
+      "CREATE UNIQUE INDEX `idx_oe16icd74D` ON `payees` (`name`)",
+      "CREATE INDEX `idx_yO4sxCt8JD` ON `payees` (`card_category`)",
+      "CREATE INDEX `idx_V2qNUo74Ze` ON `payees` (`is_archived`)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_23239598402",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": "",
+    "updateRule": "",
+    "deleteRule": "",
+    "name": "txns",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "date2862495610",
+        "max": "",
+        "min": "",
+        "name": "date",
+        "presentable": false,
+        "required": true,
+        "system": false,
+        "type": "date"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text2873790506",
+        "max": 0,
+        "min": 0,
+        "name": "memo",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "pbc_2685195880",
+        "hidden": false,
+        "id": "relation3256409694",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "payee",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text1602912115",
+        "max": 0,
+        "min": 0,
+        "name": "source",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text2675300272",
+        "max": 0,
+        "min": 0,
+        "name": "external_id",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json3622966325",
+        "maxSize": 0,
+        "name": "meta",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [
+      "CREATE INDEX `idx_IYM50qVFCA` ON `txns` (`date`)",
+      "CREATE INDEX `idx_z49QFX7Y2l` ON `txns` (`external_id`)"
+    ],
+    "system": false
+  },
+  {
+    "id": "pbc_932273079",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": null,
+    "updateRule": null,
+    "deleteRule": null,
+    "name": "v_activity_by_category_month",
+    "type": "view",
+    "fields": [
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 0,
+        "min": 0,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json105650625",
+        "maxSize": 1,
+        "name": "category",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2394296326",
+        "maxSize": 1,
+        "name": "month",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2893285722",
+        "maxSize": 1,
+        "name": "activity",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [],
+    "system": false,
+    "viewQuery": "SELECT\n  t.id,\n  t.category,\n  t.month,\n  t.activity\nFROM (\n  SELECT\n    (c.id || '|' || strftime('%Y-%m', e.date)) AS id,\n    c.name AS category,\n    strftime('%Y-%m', e.date) AS month,\n    SUM(e.qty) AS activity\n  FROM entries e\n  JOIN categories c ON c.id = e.category\n  WHERE c.kind IN ('income', 'expense')\n  GROUP BY\n    strftime('%Y-%m', e.date),\n    c.name\n) t;\n"
+  }
+]
