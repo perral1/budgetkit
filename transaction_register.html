@@ -1369,12 +1369,118 @@
       }
 
       function nextEntryStatusValue(currentValue) {
-        const values = entryStatusValues();
-        if (!values.length) return String(currentValue || "");
         const current = String(currentValue || "");
-        const idx = values.indexOf(current);
-        if (idx < 0) return values[0];
-        return values[(idx + 1) % values.length];
+        if (current === "scheduled") return "pending";
+        if (current === "pending") return "cleared";
+        if (current === "cleared") return "pending";
+        const values = entryStatusValues();
+        return values.length ? values[0] : current;
+      }
+
+      function parseYmdToUtcDate(ymd) {
+        if (!validYmd(ymd)) return null;
+        const d = new Date(ymd + "T00:00:00Z");
+        if (isNaN(d.getTime())) return null;
+        return d;
+      }
+
+      function ymdFromUtcDate(dateObj) {
+        if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return "";
+        return dateObj.toISOString().slice(0, 10);
+      }
+
+      function addMonthsClamped(ymd, monthsToAdd) {
+        const src = parseYmdToUtcDate(ymd);
+        const delta = Number(monthsToAdd || 0);
+        if (!src || !Number.isInteger(delta)) return "";
+        const year = src.getUTCFullYear();
+        const month = src.getUTCMonth();
+        const day = src.getUTCDate();
+        const firstOfTarget = new Date(Date.UTC(year, month + delta, 1));
+        const targetYear = firstOfTarget.getUTCFullYear();
+        const targetMonth = firstOfTarget.getUTCMonth();
+        const lastOfTarget = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+        const clampedDay = Math.min(day, lastOfTarget);
+        return ymdFromUtcDate(new Date(Date.UTC(targetYear, targetMonth, clampedDay)));
+      }
+
+      function nextRecurrenceDateYmd(currentYmd, rec) {
+        const safeCurrent = String(currentYmd || "").slice(0, 10);
+        if (!validYmd(safeCurrent) || !rec) return "";
+        const interval = Number(rec.interval || 1);
+        if (!Number.isInteger(interval) || interval < 1) return "";
+        if (String(rec.freq || "").toUpperCase() === "MONTHLY") {
+          return addMonthsClamped(safeCurrent, interval);
+        }
+        const src = parseYmdToUtcDate(safeCurrent);
+        if (!src) return "";
+        src.setUTCDate(src.getUTCDate() + interval);
+        return ymdFromUtcDate(src);
+      }
+
+      function stripTxnRecurrenceMeta(metaRaw) {
+        const meta = parseTxnMeta(metaRaw);
+        delete meta.recurrence;
+        delete meta.recurrence_rrule;
+        delete meta.rrule;
+        return meta;
+      }
+
+      async function applyScheduledRecurrenceForTxn(txnId) {
+        const id = String(txnId || "");
+        if (!id) return;
+        const txn = state.txns.get(id);
+        if (!txn) throw new Error("Transaction not found in current view.");
+        const rec = recurrenceFromTxnMeta(txn.meta);
+        if (!rec) throw new Error("No recurrence rule found on scheduled transaction.");
+        const txnDateYmd = fmtDate(txn.date);
+        if (!validYmd(txnDateYmd)) throw new Error("Scheduled transaction has an invalid date.");
+
+        const txnEntries = txnEntriesInView(id);
+        if (!txnEntries.length) throw new Error("Scheduled transaction has no entries.");
+
+        const newTxn = await createRecord("txns", {
+          date: txn.date,
+          payee: txn.payee || null,
+          memo: txn.memo || "",
+          source: txn.source || "",
+          meta: stripTxnRecurrenceMeta(txn.meta)
+        });
+
+        for (const entry of txnEntries) {
+          await createRecord("entries", {
+            txn: newTxn.id,
+            date: txn.date,
+            account: entry.account,
+            category: entry.category || null,
+            asset: entry.asset,
+            qty: entry.qty,
+            memo: entry.memo || "",
+            status: "pending",
+            meta: parseTxnMeta(entry.meta)
+          });
+        }
+
+        const nextDateYmd = nextRecurrenceDateYmd(txnDateYmd, rec);
+        if (!validYmd(nextDateYmd)) throw new Error("Failed to compute the next recurrence date.");
+        const until = String(rec.until || "").trim();
+        if (until && nextDateYmd > until) {
+          for (const entry of txnEntries) {
+            await deleteRecord("entries", entry.id);
+          }
+          await deleteRecord("txns", id);
+          return "Applied recurrence and removed template transaction (next date past UNTIL).";
+        }
+
+        const nextDateIso = normalizeDateToNoonUtc(nextDateYmd);
+        await updateRecord("txns", id, { date: nextDateIso });
+        for (const entry of txnEntries) {
+          await updateRecord("entries", entry.id, {
+            date: nextDateIso,
+            status: "scheduled"
+          });
+        }
+        return "Applied recurrence; created pending copy and advanced scheduled template.";
       }
 
       function statusSelectOptionsMarkup(selectedValue) {
@@ -2192,6 +2298,25 @@
         const idx = state.entries.findIndex((e) => String((e && e.id) || "") === id);
         if (idx < 0) return;
         const current = String((state.entries[idx] && state.entries[idx].status) || "");
+        const txnId = String((state.entries[idx] && state.entries[idx].txn) || "");
+        const txn = txnId ? state.txns.get(txnId) : null;
+        const rec = txn ? recurrenceFromTxnMeta(txn.meta) : null;
+        if (current === "scheduled" && txnId && rec) {
+          try {
+            state.saving = true;
+            setBusy();
+            const message = await applyScheduledRecurrenceForTxn(txnId);
+            setStatus("ok", message);
+            await refreshAll();
+          } catch (err) {
+            const info = classifyError(err);
+            setStatus(info.kind, "Scheduled recurrence apply failed: " + (err && err.message ? err.message : info.message));
+          } finally {
+            state.saving = false;
+            setBusy();
+          }
+          return;
+        }
         const next = nextEntryStatusValue(current);
         if (!next || next === current) return;
 
