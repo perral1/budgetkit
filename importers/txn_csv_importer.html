@@ -198,7 +198,7 @@
           <button class="btn primary" id="btnImport" type="button" disabled>Import CSV</button>
         </div>
         <div class="help" style="margin-top:8px;">
-          Expected headers: Date, Account, Payee, Category, Subcategory, Memo, Amount. Optional header: Cleared (`TRUE` = cleared, `FALSE` = pending). If Cleared is missing, status defaults to `cleared`. Payee values ending with a supported card category suffix (for example `Jersey Mike Restaurant`) are split into payee name + card category. All rows import with asset `USD`.
+          Expected headers: Date, Account, Payee, Category, Subcategory, Memo, Amount. Optional header: Cleared (`TRUE` = cleared, `FALSE` = pending). If Cleared is missing, status defaults to `cleared`. Payee values ending with a supported card category suffix (for example `Jersey Mike Restaurant`) are split into payee name + card category unless the full payee name already exists. All rows import with asset `USD`.
         </div>
         <div class="mono" id="fileInfo" style="margin-top:8px;">No file loaded.</div>
       </section>
@@ -492,6 +492,23 @@
         return { name: raw, cardCategory: null };
       }
 
+      function parsePayeeForImport(rawPayee, payeesByName) {
+        const raw = String(rawPayee || "").trim().replace(/\s+/g, " ");
+        if (!raw) return { name: "", cardCategory: null, wasSplit: false };
+
+        const fullKey = keyOfName(raw);
+        if (payeesByName && payeesByName.has(fullKey)) {
+          return { name: raw, cardCategory: null, wasSplit: false };
+        }
+
+        const parsed = splitPayeeAndCardCategory(raw);
+        return {
+          name: parsed.name,
+          cardCategory: parsed.cardCategory,
+          wasSplit: !!parsed.cardCategory && keyOfName(parsed.name) !== fullKey
+        };
+      }
+
       function categoryKindFromName(name, qty) {
         const n = String(name || "").trim().toLowerCase();
         const lead = n.includes(":") ? n.slice(0, n.indexOf(":")).trim() : n;
@@ -574,7 +591,7 @@
         return rows;
       }
 
-      function parseCsvRows(text, usdPrecision) {
+      function parseCsvRows(text, usdPrecision, payeesByName) {
         const matrix = csvParse(text);
         if (!matrix.length) throw new Error("CSV is empty.");
 
@@ -602,8 +619,8 @@
 
           const date = normalizeDateInput(line[idx.date]);
           const account = String(line[idx.account] || "").trim();
-          const payeeRaw = idx.payee >= 0 ? String(line[idx.payee] || "").trim() : "";
-          const parsedPayee = splitPayeeAndCardCategory(payeeRaw);
+          const payeeRaw = idx.payee >= 0 ? String(line[idx.payee] || "").trim().replace(/\s+/g, " ") : "";
+          const parsedPayee = parsePayeeForImport(payeeRaw, payeesByName);
           const category = String(line[idx.category] || "").trim();
           const subcategory = idx.subcategory >= 0 ? String(line[idx.subcategory] || "").trim() : "";
           const memo = idx.memo >= 0 ? String(line[idx.memo] || "").trim() : "";
@@ -622,6 +639,7 @@
             payeeRaw: payeeRaw,
             payeeName: parsedPayee.name,
             payeeCardCategory: parsedPayee.cardCategory,
+            payeeWasSplit: parsedPayee.wasSplit,
             category: category,
             subcategory: subcategory,
             memo: memo,
@@ -870,6 +888,29 @@
         }
       }
 
+      async function ensurePayeeForRow(row) {
+        const payeeName = String(row && row.payeeName || "").trim();
+        if (!payeeName) return null;
+
+        try {
+          return await ensurePayee(payeeName, row && row.payeeCardCategory);
+        } catch (err) {
+          const fullRawName = String(row && row.payeeRaw || "").trim().replace(/\s+/g, " ");
+          const canFallback = !!(
+            err &&
+            err.isPayeeCardCategoryConflict &&
+            row &&
+            row.payeeWasSplit &&
+            fullRawName &&
+            keyOfName(fullRawName) !== keyOfName(payeeName)
+          );
+          if (!canFallback) throw err;
+
+          pushLog("warn", "Payee card category conflict on stripped payee; retrying with full payee: " + fullRawName + ".");
+          return await ensurePayee(fullRawName, row.payeeCardCategory);
+        }
+      }
+
       function buildExternalId(fileName, row) {
         const core = [fileName, row.lineNo, row.date, row.account, row.category, row.amountMinor].join("|");
         return "import:csv:" + core;
@@ -960,6 +1001,7 @@
                   payeeRaw: row.payeeRaw,
                   payeeName: row.payeeName,
                   payeeCardCategory: row.payeeCardCategory,
+                  payeeWasSplit: row.payeeWasSplit,
                   subcategory: row.subcategory,
                   memo: row.memo
                 }));
@@ -992,8 +1034,11 @@
               const primaryPayee = groupRows.find((r) => r.payeeName) || null;
               let payeeRecord = null;
               if (primaryPayee) {
-                const hadPayee = state.refs.payeesByName.has(keyOfName(primaryPayee.payeeName));
-                payeeRecord = await ensurePayee(primaryPayee.payeeName, primaryPayee.payeeCardCategory);
+                const candidateKeys = [keyOfName(primaryPayee.payeeName)];
+                const rawKey = keyOfName(primaryPayee.payeeRaw);
+                if (primaryPayee.payeeWasSplit && rawKey && !candidateKeys.includes(rawKey)) candidateKeys.push(rawKey);
+                const hadPayee = candidateKeys.some((k) => k && state.refs.payeesByName.has(k));
+                payeeRecord = await ensurePayeeForRow(primaryPayee);
                 if (!hadPayee && payeeRecord) createdPayees += 1;
               }
 
@@ -1104,7 +1149,7 @@
         const text = await state.file.text();
         await loadReferenceData();
         await ensureUsdAsset();
-        const parsed = parseCsvRows(text, state.usdPrecision);
+        const parsed = parseCsvRows(text, state.usdPrecision, state.refs.payeesByName);
         state.parsedRows = parsed.rows;
         renderPreview();
         setBusy();
@@ -1121,6 +1166,7 @@
             payeeRaw: badRow.payeeRaw,
             payeeName: badRow.payeeName,
             payeeCardCategory: badRow.payeeCardCategory,
+            payeeWasSplit: badRow.payeeWasSplit,
             subcategory: badRow.subcategory,
             memo: badRow.memo
           };

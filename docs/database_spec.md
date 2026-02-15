@@ -98,6 +98,14 @@ Fields:
 - `external_id` (text, optional; import idempotency)
 - `meta` (json)
 
+`meta` conventions:
+- `meta.recurrence` (object, optional) stores a recurrence schedule for scheduled transactions.
+- Supported RRULE subset:
+  - `freq`: `DAILY | MONTHLY`
+  - `interval`: positive integer (`>= 1`)
+  - `until`: optional `YYYY-MM-DD`
+  - `rrule`: canonical string built from the same subset, e.g. `FREQ=MONTHLY;INTERVAL=1;UNTIL=2026-12-31`
+
 Indexes:
 - `date`
 - unique `external_id` (recommended; may include source prefix)
@@ -114,7 +122,7 @@ Fields:
 - `asset` (relation -> `assets`, required; default `USD`)
 - `qty` (number, required, signed fixed-precision integer)
 - `memo` (text, optional)
-- `status` (select, required): `pending | cleared`
+- `status` (select, required): `scheduled | pending | cleared`
 - `meta` (json)
 
 Indexes (critical):

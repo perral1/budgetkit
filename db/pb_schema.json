@@ -490,6 +490,7 @@
         "system": false,
         "type": "select",
         "values": [
+          "scheduled",
           "pending",
           "cleared"
         ]

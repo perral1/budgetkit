@@ -278,6 +278,47 @@
       flex-wrap: wrap;
     }
     .pager .spacer { flex: 1 1 auto; }
+    .modalBackdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 11, 16, 0.78);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 1200;
+    }
+    .modalCard {
+      width: min(520px, 100%);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(17, 26, 38, 0.98);
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+    .modalHead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .modalTitle {
+      margin: 0;
+      font-size: 15px;
+    }
+    .recurrenceTag {
+      border: 1px solid rgba(110, 193, 255, 0.45);
+      border-radius: 999px;
+      padding: 1px 7px;
+      font-size: 10px;
+      color: #d7ecff;
+      background: rgba(110, 193, 255, 0.12);
+      margin-left: 6px;
+      display: inline-flex;
+      align-items: center;
+      vertical-align: middle;
+    }
     @media (max-width: 1080px) {
       .grid { grid-template-columns: 1fr; }
     }
@@ -320,6 +361,7 @@
             <h2 style="margin:0;">Register</h2>
             <div class="line">
               <button class="btn primary" id="btnNewTxn" type="button">New Transaction</button>
+              <button class="btn" id="btnRecurrence" type="button" disabled>Recurrence</button>
               <button class="btn primary" id="btnEditSave" type="button" style="display:none;">Save Edit</button>
               <button class="btn" id="btnEditCancel" type="button" style="display:none;">Cancel</button>
               <button class="btn" id="btnRefresh">Refresh</button>
@@ -404,6 +446,37 @@
       </div>
     </div>
   </div>
+  <div class="modalBackdrop" id="recurrenceModal" aria-hidden="true">
+    <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="recurrenceModalTitle">
+      <div class="modalHead">
+        <h2 class="modalTitle" id="recurrenceModalTitle">Scheduled Recurrence</h2>
+      </div>
+      <div class="help" id="recurrenceTxnLabel" style="margin-bottom:10px;"></div>
+      <div class="line" style="margin-bottom:10px;">
+        <div class="field">
+          <label for="recFreq">Frequency</label>
+          <select id="recFreq">
+            <option value="DAILY">Every N day(s)</option>
+            <option value="MONTHLY">Every N month(s)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="recInterval">Interval</label>
+          <input id="recInterval" type="number" min="1" step="1" value="1" />
+        </div>
+        <div class="field">
+          <label for="recUntil">Until (optional)</label>
+          <input id="recUntil" type="date" />
+        </div>
+      </div>
+      <div class="help" id="recurrencePreview" style="margin-bottom:10px;">RRULE preview: FREQ=DAILY;INTERVAL=1</div>
+      <div class="line">
+        <button class="btn primary" id="btnRecurrenceSave" type="button">Save recurrence</button>
+        <button class="btn" id="btnRecurrenceClear" type="button">Clear recurrence</button>
+        <button class="btn" id="btnRecurrenceCancel" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     (function() {
@@ -416,6 +489,7 @@
         del(k) { try { localStorage.removeItem(k); } catch {} }
       };
       const ENTRY_STATUS_OPTIONS = [
+        { value: "scheduled", emoji: "\u23F3", label: "scheduled" },
         { value: "pending", emoji: "\u2610", label: "pending" },
         { value: "cleared", emoji: "\u2611", label: "cleared" }
       ];
@@ -441,6 +515,10 @@
         editingTxnId: "",
         editDraft: null,
         pendingFocusKey: "",
+        recurrenceModalOpen: false,
+        recurrenceModalTxnId: "",
+        recurrenceModalHasExisting: false,
+        modalBusy: false,
         sort: { column: "date", direction: "desc" },
         page: 1,
         perPage: 100,
@@ -466,6 +544,10 @@
         const d = new Date(dateValue);
         if (isNaN(d.getTime())) return String(dateValue);
         return d.toISOString().slice(0, 10);
+      }
+
+      function validYmd(raw) {
+        return /^\d{4}-\d{2}-\d{2}$/.test(String(raw || ""));
       }
 
       function normalizePrecision(raw) {
@@ -568,6 +650,115 @@
         if (!parts) return "";
         const title = (parts.negative ? "-" : "") + parts.whole + (parts.precision > 0 ? "." + parts.frac : "");
         return amountCellMarkupFromParts(parts, title);
+      }
+
+      function parseTxnMeta(metaRaw) {
+        if (!metaRaw || typeof metaRaw !== "object" || Array.isArray(metaRaw)) return {};
+        return Object.assign({}, metaRaw);
+      }
+
+      function parseRecurrenceRuleSubset(ruleRaw) {
+        const raw = String(ruleRaw || "").trim();
+        if (!raw) return null;
+        const parts = raw.split(";").map((p) => p.trim()).filter(Boolean);
+        const fields = {};
+        parts.forEach((part) => {
+          const idx = part.indexOf("=");
+          if (idx < 1) return;
+          const key = part.slice(0, idx).trim().toUpperCase();
+          const value = part.slice(idx + 1).trim();
+          if (!key) return;
+          fields[key] = value;
+        });
+        const freq = String(fields.FREQ || "").toUpperCase();
+        if (freq !== "DAILY" && freq !== "MONTHLY") return null;
+        const interval = Number(fields.INTERVAL);
+        if (!Number.isInteger(interval) || interval < 1) return null;
+        const untilRaw = String(fields.UNTIL || "").trim();
+        const until = untilRaw ? untilRaw.slice(0, 10) : "";
+        if (until && !validYmd(until)) return null;
+        return {
+          freq: freq,
+          interval: interval,
+          until: until,
+          rrule: buildRecurrenceRuleSubset(freq, interval, until)
+        };
+      }
+
+      function buildRecurrenceRuleSubset(freq, interval, until) {
+        const safeFreq = String(freq || "").toUpperCase() === "MONTHLY" ? "MONTHLY" : "DAILY";
+        const rawInterval = Number(interval);
+        const safeInterval = Number.isInteger(rawInterval) && rawInterval > 0 ? rawInterval : 1;
+        const safeUntil = String(until || "").trim();
+        const out = ["FREQ=" + safeFreq, "INTERVAL=" + safeInterval];
+        if (safeUntil) out.push("UNTIL=" + safeUntil);
+        return out.join(";");
+      }
+
+      function recurrenceFromTxnMeta(metaRaw) {
+        const meta = parseTxnMeta(metaRaw);
+        const recObj = meta.recurrence && typeof meta.recurrence === "object" && !Array.isArray(meta.recurrence)
+          ? meta.recurrence
+          : null;
+
+        const ruleCandidates = [
+          recObj && recObj.rrule,
+          meta.recurrence_rrule,
+          meta.rrule
+        ];
+        for (const candidate of ruleCandidates) {
+          const parsed = parseRecurrenceRuleSubset(candidate);
+          if (parsed) return parsed;
+        }
+
+        if (!recObj) return null;
+        const freq = String(recObj.freq || "").toUpperCase();
+        const interval = Number(recObj.interval);
+        const untilRaw = String(recObj.until || "").trim();
+        const until = untilRaw ? untilRaw.slice(0, 10) : "";
+        if ((freq !== "DAILY" && freq !== "MONTHLY") || !Number.isInteger(interval) || interval < 1) return null;
+        if (until && !validYmd(until)) return null;
+        return {
+          freq: freq,
+          interval: interval,
+          until: until,
+          rrule: buildRecurrenceRuleSubset(freq, interval, until)
+        };
+      }
+
+      function recurrenceLabel(rec) {
+        if (!rec) return "";
+        const unit = rec.freq === "MONTHLY" ? "month" : "day";
+        const n = Number(rec.interval || 1);
+        const every = "every " + n + " " + unit + (n === 1 ? "" : "s");
+        return rec.until ? (every + " until " + rec.until) : every;
+      }
+
+      function recurrenceTagMarkupFromTxn(txn) {
+        const rec = recurrenceFromTxnMeta(txn && txn.meta);
+        if (!rec) return "";
+        const shortUnit = rec.freq === "MONTHLY" ? "mo" : "d";
+        const short = "R q" + rec.interval + shortUnit + (rec.until ? " to " + rec.until : "");
+        const title = "Recurs " + recurrenceLabel(rec) + " (" + rec.rrule + ")";
+        return '<span class="recurrenceTag" title="' + escapeHtml(title) + '">' + escapeHtml(short) + "</span>";
+      }
+
+      function memoCellMarkup(txn) {
+        const memo = escapeHtml((txn && txn.memo) || "");
+        const recurrenceTag = recurrenceTagMarkupFromTxn(txn);
+        if (!recurrenceTag) return memo;
+        return memo ? (memo + " " + recurrenceTag) : recurrenceTag;
+      }
+
+      function txnEntriesInView(txnId) {
+        const id = String(txnId || "");
+        if (!id) return [];
+        return state.entries.filter((e) => String((e && e.txn) || "") === id);
+      }
+
+      function isScheduledTxnInView(txnId) {
+        const rows = txnEntriesInView(txnId);
+        return rows.length > 0 && rows.every((e) => String((e && e.status) || "") === "scheduled");
       }
 
       function setStatus(kind, message) {
@@ -732,7 +923,8 @@
 
       function setBusy() {
         const editing = !!state.editingTxnId;
-        const disabled = !SESSION.token || state.loading || state.saving || state.deleting || editing;
+        const modalOpen = !!state.recurrenceModalOpen;
+        const disabled = !SESSION.token || state.loading || state.saving || state.deleting || state.modalBusy || editing || modalOpen;
         ["#btnRefresh", "#btnNewTxn", "#btnLogin"].forEach((sel) => {
           const el = $(sel);
           if (el) el.disabled = disabled && sel !== "#btnLogin";
@@ -741,8 +933,29 @@
           const el = $(sel);
           if (el) el.disabled = disabled;
         });
-        const canDelete = !!SESSION.token && state.selectedTxnIds.length > 0 && !state.loading && !state.saving && !state.deleting && !editing;
+        const canDelete = !!SESSION.token
+          && state.selectedTxnIds.length > 0
+          && !state.loading
+          && !state.saving
+          && !state.deleting
+          && !state.modalBusy
+          && !editing
+          && !modalOpen;
         $("#btnDeleteTxn").disabled = !canDelete;
+        const recurrenceBtn = $("#btnRecurrence");
+        if (recurrenceBtn) {
+          const selectedTxnId = state.selectedTxnIds.length === 1 ? state.selectedTxnIds[0] : "";
+          const canEditRecurrence = !!SESSION.token
+            && !!selectedTxnId
+            && !state.loading
+            && !state.saving
+            && !state.deleting
+            && !state.modalBusy
+            && !editing
+            && !modalOpen
+            && isScheduledTxnInView(selectedTxnId);
+          recurrenceBtn.disabled = !canEditRecurrence;
+        }
         const btnEditSave = $("#btnEditSave");
         const btnEditCancel = $("#btnEditCancel");
         if (btnEditSave) btnEditSave.style.display = editing ? "inline-flex" : "none";
@@ -752,6 +965,180 @@
         $("#btnPrevPage").disabled = disabled || state.page <= 1;
         $("#btnNextPage").disabled = disabled || state.page >= state.totalPages;
         $("#perPage").disabled = disabled;
+
+        const modalHidden = !state.recurrenceModalOpen;
+        const modalDisabled = modalHidden || state.modalBusy;
+        if ($("#recFreq")) $("#recFreq").disabled = modalDisabled;
+        if ($("#recInterval")) $("#recInterval").disabled = modalDisabled;
+        if ($("#recUntil")) $("#recUntil").disabled = modalDisabled;
+        if ($("#btnRecurrenceSave")) $("#btnRecurrenceSave").disabled = modalDisabled;
+        if ($("#btnRecurrenceCancel")) $("#btnRecurrenceCancel").disabled = modalDisabled;
+        if ($("#btnRecurrenceClear")) $("#btnRecurrenceClear").disabled = modalDisabled || !state.recurrenceModalHasExisting;
+      }
+
+      function recurrencePreviewText() {
+        const freqSel = $("#recFreq");
+        const intervalInput = $("#recInterval");
+        const untilInput = $("#recUntil");
+        if (!freqSel || !intervalInput || !untilInput) return "";
+        const freq = String(freqSel.value || "DAILY").toUpperCase() === "MONTHLY" ? "MONTHLY" : "DAILY";
+        const n = Number(intervalInput.value);
+        const interval = Number.isInteger(n) && n > 0 ? n : 1;
+        const until = String(untilInput.value || "").trim();
+        return buildRecurrenceRuleSubset(freq, interval, until);
+      }
+
+      function updateRecurrencePreview() {
+        const box = $("#recurrencePreview");
+        if (!box) return;
+        box.textContent = "RRULE preview: " + recurrencePreviewText();
+      }
+
+      function closeRecurrenceModal() {
+        state.recurrenceModalOpen = false;
+        state.recurrenceModalTxnId = "";
+        state.recurrenceModalHasExisting = false;
+        const modal = $("#recurrenceModal");
+        if (modal) {
+          modal.style.display = "none";
+          modal.setAttribute("aria-hidden", "true");
+        }
+        setBusy();
+      }
+
+      async function openRecurrenceModalForSelection() {
+        if (!SESSION.token) return;
+        if (state.loading || state.saving || state.deleting || state.modalBusy || state.editingTxnId) return;
+        if (state.selectedTxnIds.length !== 1) {
+          setStatus("warn", "Select exactly one transaction to edit recurrence.");
+          return;
+        }
+        const txnId = String(state.selectedTxnIds[0] || "");
+        if (!txnId) return;
+        if (!isScheduledTxnInView(txnId)) {
+          setStatus("warn", "Recurrence is only available for transactions where all visible entries are scheduled.");
+          return;
+        }
+
+        const modal = $("#recurrenceModal");
+        if (!modal) return;
+
+        try {
+          state.modalBusy = true;
+          setBusy();
+          const txn = await getRecord("txns", txnId);
+          if (txn && txn.id) state.txns.set(String(txn.id), txn);
+          const txnEntries = await listRecordsSafe("entries", {
+            filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"',
+            perPage: 500,
+            sort: "-date"
+          });
+          if (!txnEntries.length || txnEntries.some((e) => String((e && e.status) || "") !== "scheduled")) {
+            throw new Error("Recurrence is only available when all entries in the transaction are scheduled.");
+          }
+          const rec = recurrenceFromTxnMeta(txn && txn.meta);
+          const txnDate = fmtDate(txn && txn.date);
+          const payee = payeeDisplayName(txn && txn.payee);
+          $("#recurrenceTxnLabel").textContent = "Transaction " + txnId + (txnDate ? (" | " + txnDate) : "") + (payee ? (" | " + payee) : "");
+          $("#recFreq").value = rec ? rec.freq : "DAILY";
+          $("#recInterval").value = String(rec ? rec.interval : 1);
+          $("#recUntil").value = rec && rec.until ? rec.until : "";
+          state.recurrenceModalTxnId = txnId;
+          state.recurrenceModalOpen = true;
+          state.recurrenceModalHasExisting = !!rec;
+          modal.style.display = "flex";
+          modal.setAttribute("aria-hidden", "false");
+          updateRecurrencePreview();
+          setStatus("warn", "Set recurrence for scheduled transaction " + txnId + ".");
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Failed to open recurrence editor: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.modalBusy = false;
+          setBusy();
+        }
+      }
+
+      async function saveRecurrenceFromModal() {
+        const txnId = String(state.recurrenceModalTxnId || "");
+        if (!SESSION.token || !txnId || !state.recurrenceModalOpen) return;
+        const freq = String(($("#recFreq") && $("#recFreq").value) || "").toUpperCase();
+        const intervalRaw = Number(($("#recInterval") && $("#recInterval").value) || "");
+        const until = String(($("#recUntil") && $("#recUntil").value) || "").trim();
+        if (freq !== "DAILY" && freq !== "MONTHLY") {
+          setStatus("bad", "Recurrence save failed: frequency must be DAILY or MONTHLY.");
+          return;
+        }
+        if (!Number.isInteger(intervalRaw) || intervalRaw < 1) {
+          setStatus("bad", "Recurrence save failed: interval must be a whole number >= 1.");
+          return;
+        }
+        if (until && !validYmd(until)) {
+          setStatus("bad", "Recurrence save failed: UNTIL must be YYYY-MM-DD.");
+          return;
+        }
+        const recurrence = {
+          freq: freq,
+          interval: intervalRaw,
+          until: until,
+          rrule: buildRecurrenceRuleSubset(freq, intervalRaw, until)
+        };
+
+        try {
+          state.modalBusy = true;
+          setBusy();
+          const currentTxn = state.txns.get(txnId) || await getRecord("txns", txnId);
+          const meta = parseTxnMeta(currentTxn && currentTxn.meta);
+          meta.recurrence = {
+            freq: recurrence.freq,
+            interval: recurrence.interval,
+            until: recurrence.until || null,
+            rrule: recurrence.rrule
+          };
+          delete meta.recurrence_rrule;
+          delete meta.rrule;
+          await updateRecord("txns", txnId, { meta: meta });
+          if (currentTxn && currentTxn.id) {
+            state.txns.set(txnId, Object.assign({}, currentTxn, { meta: meta }));
+          }
+          closeRecurrenceModal();
+          renderRegister();
+          setStatus("ok", "Recurrence saved: " + recurrence.rrule);
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Recurrence save failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.modalBusy = false;
+          setBusy();
+        }
+      }
+
+      async function clearRecurrenceFromModal() {
+        const txnId = String(state.recurrenceModalTxnId || "");
+        if (!SESSION.token || !txnId || !state.recurrenceModalOpen) return;
+
+        try {
+          state.modalBusy = true;
+          setBusy();
+          const currentTxn = state.txns.get(txnId) || await getRecord("txns", txnId);
+          const meta = parseTxnMeta(currentTxn && currentTxn.meta);
+          delete meta.recurrence;
+          delete meta.recurrence_rrule;
+          delete meta.rrule;
+          await updateRecord("txns", txnId, { meta: meta });
+          if (currentTxn && currentTxn.id) {
+            state.txns.set(txnId, Object.assign({}, currentTxn, { meta: meta }));
+          }
+          closeRecurrenceModal();
+          renderRegister();
+          setStatus("ok", "Recurrence cleared for transaction " + txnId + ".");
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Failed to clear recurrence: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.modalBusy = false;
+          setBusy();
+        }
       }
 
       function refillFilterSelect(selId, list, placeholder, labelFn) {
@@ -1969,7 +2356,7 @@
               "<td>" + escapeHtml(accountDisplayName(e.account)) + "</td>",
               "<td>" + escapeHtml(payeeDisplayName(txn.payee)) + "</td>",
               "<td><span class=\"pill\">" + escapeHtml(categoryDisplayName(e.category)) + "</span></td>",
-              "<td>" + escapeHtml(txn.memo || "") + "</td>",
+              "<td>" + memoCellMarkup(txn) + "</td>",
               "<td>" + amountCellMarkupFromMinor(e.qty, assetPrecision(e.asset)) + "</td>",
               "<td>" + statusCellButtonMarkup(e.id, e.status) + "</td>"
             ].join("");
@@ -1998,7 +2385,7 @@
             "<td></td>",
             "<td>" + escapeHtml(payeeDisplayName(txn.payee)) + "</td>",
             "<td></td>",
-            "<td>" + escapeHtml(txn.memo || "") + "</td>",
+            "<td>" + memoCellMarkup(txn) + "</td>",
             "<td>" + amountCellMarkupFromMajor(totalQty, totalPrecision) + "</td>",
             "<td></td>"
           ].join("");
@@ -2177,6 +2564,7 @@
         state.visibleTxnOrder = [];
         state.editingTxnId = "";
         state.editDraft = null;
+        closeRecurrenceModal();
         state.page = 1;
         state.totalPages = 1;
         state.totalItems = 0;
@@ -2190,9 +2578,24 @@
 
       $("#btnRefresh").addEventListener("click", refreshAll);
       $("#btnNewTxn").addEventListener("click", startNewInlineEdit);
+      $("#btnRecurrence").addEventListener("click", openRecurrenceModalForSelection);
       $("#btnDeleteTxn").addEventListener("click", deleteSelectedTransaction);
       $("#btnEditSave").addEventListener("click", saveInlineEdit);
       $("#btnEditCancel").addEventListener("click", cancelInlineEdit);
+      $("#btnRecurrenceSave").addEventListener("click", saveRecurrenceFromModal);
+      $("#btnRecurrenceClear").addEventListener("click", clearRecurrenceFromModal);
+      $("#btnRecurrenceCancel").addEventListener("click", function() {
+        closeRecurrenceModal();
+        setStatus("ok", "Recurrence editor canceled.");
+      });
+      ["#recFreq", "#recInterval", "#recUntil"].forEach((sel) => {
+        $(sel).addEventListener("input", updateRecurrencePreview);
+        $(sel).addEventListener("change", updateRecurrencePreview);
+      });
+      $("#recurrenceModal").addEventListener("click", function(e) {
+        if (e.target !== $("#recurrenceModal")) return;
+        closeRecurrenceModal();
+      });
 
       ["#fltFrom", "#fltTo", "#fltAccount", "#fltCategory", "#fltPayee", "#fltStatus", "#fltBudgetOnly"].forEach((sel) => {
         $(sel).addEventListener("change", function() {
@@ -2340,6 +2743,12 @@
       document.addEventListener("click", function(e) {
         if (e.target && e.target.closest("#registerBody .inlineLookup")) return;
         closeInlineLookups();
+      });
+      document.addEventListener("keydown", function(e) {
+        if (e.key !== "Escape") return;
+        if (!state.recurrenceModalOpen) return;
+        e.preventDefault();
+        closeRecurrenceModal();
       });
 
       $("#pbUrl").value = store.get("pbUrl", "");
