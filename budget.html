@@ -399,6 +399,112 @@
         return y + "-" + String(m).padStart(2, "0");
       }
 
+      function validYmd(raw) {
+        return /^\d{4}-\d{2}-\d{2}$/.test(String(raw || ""));
+      }
+
+      function parseYmdToUtcDate(ymd) {
+        if (!validYmd(ymd)) return null;
+        const d = new Date(ymd + "T00:00:00Z");
+        if (isNaN(d.getTime())) return null;
+        return d;
+      }
+
+      function ymdFromUtcDate(dateObj) {
+        if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return "";
+        return dateObj.toISOString().slice(0, 10);
+      }
+
+      function ymdFromIso(isoRaw) {
+        if (!isoRaw) return "";
+        const d = new Date(String(isoRaw));
+        if (isNaN(d.getTime())) return "";
+        return d.toISOString().slice(0, 10);
+      }
+
+      function addMonthsClamped(ymd, monthsToAdd) {
+        const src = parseYmdToUtcDate(ymd);
+        const delta = Number(monthsToAdd || 0);
+        if (!src || !Number.isInteger(delta)) return "";
+        const year = src.getUTCFullYear();
+        const month = src.getUTCMonth();
+        const day = src.getUTCDate();
+        const firstOfTarget = new Date(Date.UTC(year, month + delta, 1));
+        const targetYear = firstOfTarget.getUTCFullYear();
+        const targetMonth = firstOfTarget.getUTCMonth();
+        const lastOfTarget = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+        const clampedDay = Math.min(day, lastOfTarget);
+        return ymdFromUtcDate(new Date(Date.UTC(targetYear, targetMonth, clampedDay)));
+      }
+
+      function parseRecurrenceRuleSubset(ruleRaw) {
+        const raw = String(ruleRaw || "").trim();
+        if (!raw) return null;
+        const parts = raw.split(";").map((p) => p.trim()).filter(Boolean);
+        const fields = {};
+        for (const part of parts) {
+          const idx = part.indexOf("=");
+          if (idx < 1) continue;
+          const key = part.slice(0, idx).trim().toUpperCase();
+          const value = part.slice(idx + 1).trim();
+          if (!key) continue;
+          fields[key] = value;
+        }
+        const freq = String(fields.FREQ || "").toUpperCase();
+        if (freq !== "DAILY" && freq !== "MONTHLY") return null;
+        const interval = Number(fields.INTERVAL);
+        if (!Number.isInteger(interval) || interval < 1) return null;
+        const untilRaw = String(fields.UNTIL || "").trim();
+        const until = untilRaw ? untilRaw.slice(0, 10) : "";
+        if (until && !validYmd(until)) return null;
+        return {
+          freq: freq,
+          interval: interval,
+          until: until
+        };
+      }
+
+      function recurrenceFromTxnMeta(metaRaw) {
+        if (!metaRaw || typeof metaRaw !== "object" || Array.isArray(metaRaw)) return null;
+        const meta = Object.assign({}, metaRaw);
+        const recObj = meta.recurrence && typeof meta.recurrence === "object" && !Array.isArray(meta.recurrence)
+          ? meta.recurrence
+          : null;
+        const ruleCandidates = [
+          recObj && recObj.rrule,
+          meta.recurrence_rrule,
+          meta.rrule
+        ];
+        for (const candidate of ruleCandidates) {
+          const parsed = parseRecurrenceRuleSubset(candidate);
+          if (parsed) return parsed;
+        }
+        if (!recObj) return null;
+        const freq = String(recObj.freq || "").toUpperCase();
+        const interval = Number(recObj.interval);
+        const untilRaw = String(recObj.until || "").trim();
+        const until = untilRaw ? untilRaw.slice(0, 10) : "";
+        if ((freq !== "DAILY" && freq !== "MONTHLY") || !Number.isInteger(interval) || interval < 1) return null;
+        if (until && !validYmd(until)) return null;
+        return {
+          freq: freq,
+          interval: interval,
+          until: until
+        };
+      }
+
+      function nextRecurrenceDateYmd(currentYmd, rec) {
+        const safeCurrent = String(currentYmd || "").slice(0, 10);
+        if (!validYmd(safeCurrent) || !rec) return "";
+        const interval = Number(rec.interval || 1);
+        if (!Number.isInteger(interval) || interval < 1) return "";
+        if (String(rec.freq || "").toUpperCase() === "MONTHLY") return addMonthsClamped(safeCurrent, interval);
+        const src = parseYmdToUtcDate(safeCurrent);
+        if (!src) return "";
+        src.setUTCDate(src.getUTCDate() + interval);
+        return ymdFromUtcDate(src);
+      }
+
       function setStatus(kind, message) {
         const box = $("#statusBox");
         box.className = "status" + (kind ? " " + kind : "");
@@ -516,6 +622,41 @@
         }
 
         return [];
+      }
+
+      async function listRecordsByIds(collection, ids, extraFilter) {
+        const uniqueIds = Array.from(new Set((ids || []).map((id) => String(id || "")).filter(Boolean)));
+        if (!uniqueIds.length) return [];
+        const perPage = 500;
+        const out = [];
+        const chunkSize = 40;
+        const extra = String(extraFilter || "").trim();
+
+        async function runPaged(filter) {
+          let page = 1;
+          while (true) {
+            const qs = toQS({
+              filter: filter,
+              page: page,
+              perPage: perPage
+            });
+            const data = await pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records?" + qs, { method: "GET" });
+            const rows = Array.isArray(data && data.items) ? data.items : [];
+            out.push(...rows);
+            const totalPages = Math.max(1, Number((data && data.totalPages) || 1));
+            if (page >= totalPages) break;
+            page += 1;
+          }
+        }
+
+        for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+          const chunk = uniqueIds.slice(i, i + chunkSize);
+          const idFilter = chunk.map((id) => 'id = "' + id.replaceAll('"', '\\"') + '"').join(" || ");
+          const filter = extra ? ("(" + idFilter + ") && (" + extra + ")") : ("(" + idFilter + ")");
+          await runPaged(filter);
+        }
+
+        return out;
       }
 
       async function authWithPassword(email, password) {
@@ -936,8 +1077,9 @@
         const year = state.year;
         const janKey = monthKey(year, 1);
         const decKey = monthKey(year, 12);
+        const decYmd = year + "-12-31";
 
-        const [categories, budgetLines, activityRows] = await Promise.all([
+        const [categories, budgetLines, activityRows, scheduledEntries] = await Promise.all([
           listRecordsSafe("categories", {
             filter: '(kind = "income" || kind = "expense")',
             sort: "name",
@@ -952,8 +1094,19 @@
             filter: 'month <= "' + decKey + '"',
             sort: "month",
             perPage: 500
+          }),
+          listRecordsSafe("entries", {
+            filter: 'status = "scheduled" && date <= "' + decYmd + 'T23:59:59.999Z"',
+            sort: "date",
+            perPage: 500
           })
         ]);
+        const scheduledTxnIds = Array.from(new Set(
+          scheduledEntries
+            .map((entry) => String(entry && entry.txn ? entry.txn : ""))
+            .filter(Boolean)
+        ));
+        const txns = await listRecordsByIds("txns", scheduledTxnIds, 'date <= "' + decYmd + 'T23:59:59.999Z"');
 
         const categoriesById = new Map(categories.map((c) => [String(c.id), c]));
         const categoryIdByName = new Map();
@@ -1009,6 +1162,54 @@
           if (month >= janKey && month <= decKey) {
             const key = catId + "|" + month;
             activityByMonth.set(key, qty);
+          }
+        }
+
+        const entriesByTxn = new Map();
+        for (const entry of scheduledEntries) {
+          const txnId = String(entry.txn || "");
+          if (!txnId) continue;
+          if (!entriesByTxn.has(txnId)) entriesByTxn.set(txnId, []);
+          entriesByTxn.get(txnId).push(entry);
+        }
+
+        for (const txn of txns) {
+          const rec = recurrenceFromTxnMeta(txn && txn.meta);
+          if (!rec) continue;
+          const txnId = String(txn.id || "");
+          if (!txnId) continue;
+          const templateYmd = ymdFromIso(txn.date);
+          if (!validYmd(templateYmd)) continue;
+          const untilYmd = String(rec.until || "").trim();
+          if (untilYmd && templateYmd > untilYmd) continue;
+          const txnEntries = entriesByTxn.get(txnId) || [];
+          if (!txnEntries.length) continue;
+
+          // Skip template date and project future occurrences to avoid double-counting
+          // the currently stored template entry that may already be in activity view.
+          let occurrenceYmd = nextRecurrenceDateYmd(templateYmd, rec);
+          let guard = 0;
+          while (occurrenceYmd && validYmd(occurrenceYmd) && occurrenceYmd <= decYmd && guard < 5000) {
+            guard += 1;
+            if (untilYmd && occurrenceYmd > untilYmd) break;
+            const month = occurrenceYmd.slice(0, 7);
+            for (const entry of txnEntries) {
+              const catId = String(entry.category || "");
+              if (!catId || !categoriesById.has(catId)) continue;
+              const cat = categoriesById.get(catId);
+              const kind = String((cat && cat.kind) || "");
+              if (kind !== "income" && kind !== "expense") continue;
+              const qty = parseMinorInt(entry.qty || 0, "entries.qty");
+              if (month < janKey) {
+                openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
+              } else if (month <= decKey) {
+                const key = catId + "|" + month;
+                activityByMonth.set(key, Number(activityByMonth.get(key) || 0) + qty);
+              }
+            }
+            const nextYmd = nextRecurrenceDateYmd(occurrenceYmd, rec);
+            if (!nextYmd || nextYmd === occurrenceYmd) break;
+            occurrenceYmd = nextYmd;
           }
         }
 
