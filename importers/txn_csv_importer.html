@@ -246,6 +246,7 @@
       const state = {
         file: null,
         parsedRows: [],
+        parsedRowsSortedByDate: false,
         importing: false,
         usdPrecision: 2,
         refs: {
@@ -257,11 +258,31 @@
       };
 
       const PAYEE_CARD_CATEGORIES = ["restaurant", "intlrest", "grocery", "airlines", "hotel", "rental", "parking", "toll", "taxi"];
+      const TXN_IMPORT_CONCURRENCY = 6;
 
       function setStatus(kind, message) {
         const box = $("#statusBox");
         box.className = "status" + (kind ? " " + kind : "");
         box.textContent = message;
+      }
+
+      async function runWithConcurrency(items, concurrency, worker) {
+        const total = Array.isArray(items) ? items.length : 0;
+        if (!total) return;
+        const limit = Math.max(1, Math.min(Number(concurrency) || 1, total));
+        let nextIndex = 0;
+        const runners = [];
+        for (let r = 0; r < limit; r++) {
+          runners.push((async () => {
+            while (true) {
+              const current = nextIndex;
+              nextIndex += 1;
+              if (current >= total) break;
+              await worker(items[current], current);
+            }
+          })());
+        }
+        await Promise.all(runners);
       }
 
       function escapeHtml(v) {
@@ -613,6 +634,8 @@
         }
 
         const out = [];
+        let prevDate = "";
+        let isSortedByDate = true;
         for (let r = 1; r < matrix.length; r++) {
           const line = matrix[r];
           if (!line || !line.length || line.every((x) => String(x || "").trim() === "")) continue;
@@ -632,6 +655,11 @@
           }
           const status = idx.cleared >= 0 ? parseClearedStatus(line[idx.cleared]) : "cleared";
 
+          if (date) {
+            if (prevDate && date < prevDate) isSortedByDate = false;
+            prevDate = date;
+          }
+
           out.push({
             lineNo: r + 1,
             date: date,
@@ -650,7 +678,8 @@
 
         return {
           rows: out,
-          hasClearedColumn: idx.cleared >= 0
+          hasClearedColumn: idx.cleared >= 0,
+          isSortedByDate: isSortedByDate
         };
       }
 
@@ -692,6 +721,10 @@
           }
         }
         return null;
+      }
+
+      function isImportRowValid(row) {
+        return !!(row && row.date && row.account && row.category && row.amountMinor != null && row.status);
       }
 
       function hasInvalidValueError(err, fieldName, badValue) {
@@ -911,6 +944,14 @@
         }
       }
 
+      function payeeEnsureKeyForRow(row) {
+        const payeeName = String(row && row.payeeName || "").trim().replace(/\s+/g, " ");
+        const payeeRaw = String(row && row.payeeRaw || "").trim().replace(/\s+/g, " ");
+        const cardCategory = normalizeCardCategory(row && row.payeeCardCategory) || "";
+        const wasSplit = row && row.payeeWasSplit ? "1" : "0";
+        return [payeeName, cardCategory, payeeRaw, wasSplit].join("|");
+      }
+
       function buildExternalId(fileName, row) {
         const core = [fileName, row.lineNo, row.date, row.account, row.category, row.amountMinor].join("|");
         return "import:csv:" + core;
@@ -936,7 +977,7 @@
         return keyOfName(name) === "transfer";
       }
 
-      function findPairedTransferIndex(rows, index, consumedIndexes) {
+      function findPairedTransferIndex(rows, index, consumedIndexes, assumeSortedByDate) {
         const row = rows[index];
         if (!row || !row.date || !row.account || !row.category || row.amountMinor == null || !row.status) return -1;
         if (!isTransferCategory(row.category)) return -1;
@@ -946,6 +987,7 @@
           const candidate = rows[j];
           if (!candidate || !candidate.date || !candidate.account || !candidate.category || candidate.amountMinor == null || !candidate.status) continue;
           if (!isTransferCategory(candidate.category)) continue;
+          if (assumeSortedByDate && candidate.date > row.date) break;
           if (candidate.date !== row.date) continue;
           if (candidate.amountMinor === -row.amountMinor) return j;
         }
@@ -970,6 +1012,8 @@
         let loggedFirstInvalid = false;
         const consumedIndexes = new Set();
         let processedRows = 0;
+        const payeeEnsureFailedKeys = new Set();
+        const payeeEnsureResolvedIds = new Map();
 
         try {
           setStatus("", "Loading existing accounts/categories/assets...");
@@ -978,14 +1022,112 @@
           const useExternalId = $("#idempotentIds").value === "1";
           const fileName = state.file ? state.file.name : "csv";
 
+          const missingAccounts = [];
+          const missingCategories = [];
+          const seenAccountKeys = new Set();
+          const seenCategoryKeys = new Set();
+          const seenPayeeEnsureKeys = new Set();
+          const payeeRowsToEnsure = [];
+
+          for (let i = 0; i < state.parsedRows.length; i++) {
+            const row = state.parsedRows[i];
+            if (!isImportRowValid(row)) continue;
+
+            const accountKey = keyOfName(row.account);
+            if (accountKey && !seenAccountKeys.has(accountKey)) {
+              seenAccountKeys.add(accountKey);
+              if (!state.refs.accountsByName.has(accountKey)) missingAccounts.push(row.account);
+            }
+
+            const categoryKey = keyOfName(row.category);
+            if (categoryKey && !seenCategoryKeys.has(categoryKey)) {
+              seenCategoryKeys.add(categoryKey);
+              if (!state.refs.categoriesByName.has(categoryKey)) {
+                missingCategories.push({ name: row.category, qtyHint: row.amountMinor });
+              }
+            }
+
+            if (row.payeeName) {
+              const payeeEnsureKey = payeeEnsureKeyForRow(row);
+              if (!seenPayeeEnsureKeys.has(payeeEnsureKey)) {
+                seenPayeeEnsureKeys.add(payeeEnsureKey);
+                payeeRowsToEnsure.push(row);
+              }
+            }
+          }
+
+          if (missingAccounts.length) {
+            setStatus("", "Ensuring " + missingAccounts.length + " missing accounts...");
+            for (let i = 0; i < missingAccounts.length; i++) {
+              const name = missingAccounts[i];
+              try {
+                await ensureAccount(name);
+                createdAccounts += 1;
+              } catch (err) {
+                pushLog("bad", "Failed to create account '" + name + "': " + (err && err.message ? err.message : String(err)));
+              }
+            }
+          }
+
+          if (missingCategories.length) {
+            setStatus("", "Ensuring " + missingCategories.length + " missing categories...");
+            for (let i = 0; i < missingCategories.length; i++) {
+              const item = missingCategories[i];
+              try {
+                await ensureCategory(item.name, item.qtyHint);
+                createdCategories += 1;
+              } catch (err) {
+                pushLog("bad", "Failed to create category '" + item.name + "': " + (err && err.message ? err.message : String(err)));
+              }
+            }
+          }
+
+          if (payeeRowsToEnsure.length) {
+            setStatus("", "Ensuring " + payeeRowsToEnsure.length + " payees...");
+            let payeesProcessed = 0;
+            let payeesCreatedInPhase = 0;
+            let lastPayeeProgressBucket = 0;
+            function maybeUpdatePayeeProgress() {
+              const bucket = Math.floor(payeesProcessed / 100);
+              if (bucket <= lastPayeeProgressBucket && payeesProcessed !== payeeRowsToEnsure.length) return;
+              lastPayeeProgressBucket = bucket;
+              setStatus("", "Ensuring payees... " + payeesProcessed + "/" + payeeRowsToEnsure.length + " processed (" + payeesCreatedInPhase + " created).");
+              $("#importStats").textContent = "Payees: " + payeesProcessed + " / " + payeeRowsToEnsure.length + " processed...";
+            }
+            for (let i = 0; i < payeeRowsToEnsure.length; i++) {
+              const row = payeeRowsToEnsure[i];
+              const payeeEnsureKey = payeeEnsureKeyForRow(row);
+              const candidateKeys = [keyOfName(row.payeeName)];
+              const rawKey = keyOfName(row.payeeRaw);
+              if (row.payeeWasSplit && rawKey && !candidateKeys.includes(rawKey)) candidateKeys.push(rawKey);
+              const hadPayee = candidateKeys.some((k) => k && state.refs.payeesByName.has(k));
+
+              try {
+                const payeeRecord = await ensurePayeeForRow(row);
+                if (payeeRecord && payeeRecord.id) payeeEnsureResolvedIds.set(payeeEnsureKey, payeeRecord.id);
+                if (!hadPayee && payeeRecord) {
+                  createdPayees += 1;
+                  payeesCreatedInPhase += 1;
+                }
+              } catch (err) {
+                if (err && err.isPayeeCardCategoryConflict) throw err;
+                payeeEnsureFailedKeys.add(payeeEnsureKey);
+                pushLog("bad", "Line " + row.lineNo + " payee pre-create failed: " + (err && err.message ? err.message : String(err)));
+              } finally {
+                payeesProcessed += 1;
+                maybeUpdatePayeeProgress();
+              }
+            }
+          }
+
           setStatus("", "Importing " + state.parsedRows.length + " rows...");
           $("#importStats").textContent = "Running...";
-
+          const importGroups = [];
           for (let i = 0; i < state.parsedRows.length; i++) {
             if (consumedIndexes.has(i)) continue;
             const row = state.parsedRows[i];
 
-            if (!row.date || !row.account || !row.category || row.amountMinor == null || !row.status) {
+            if (!isImportRowValid(row)) {
               skipped += 1;
               pushLog("warn", "Line " + row.lineNo + " skipped: missing required value (date/account/category/amount/cleared).");
               if (!loggedFirstInvalid) {
@@ -1010,22 +1152,32 @@
               continue;
             }
 
-            const pairIndex = findPairedTransferIndex(state.parsedRows, i, consumedIndexes);
+            const pairIndex = findPairedTransferIndex(state.parsedRows, i, consumedIndexes, state.parsedRowsSortedByDate);
             const groupRows = pairIndex >= 0 ? [row, state.parsedRows[pairIndex]] : [row];
             if (pairIndex >= 0) consumedIndexes.add(pairIndex);
+            importGroups.push(groupRows);
+          }
 
+          let lastProgressBucket = Math.floor(processedRows / 100);
+          function maybeUpdateProgress() {
+            const bucket = Math.floor(processedRows / 100);
+            if (bucket <= lastProgressBucket) return;
+            lastProgressBucket = bucket;
+            setStatus("", "Importing... " + processedRows + "/" + state.parsedRows.length + " rows processed.");
+            $("#importStats").textContent = "Processed " + processedRows + " / " + state.parsedRows.length + " rows...";
+          }
+
+          await runWithConcurrency(importGroups, TXN_IMPORT_CONCURRENCY, async (groupRows) => {
             const groupAccounts = [];
             const groupCategories = [];
             try {
               for (let g = 0; g < groupRows.length; g++) {
                 const groupRow = groupRows[g];
-                const hadAccount = state.refs.accountsByName.has(keyOfName(groupRow.account));
-                const account = await ensureAccount(groupRow.account);
-                if (!hadAccount) createdAccounts += 1;
+                const account = state.refs.accountsByName.get(keyOfName(groupRow.account));
+                if (!account) throw new Error("Account not found after pre-create: " + groupRow.account);
 
-                const hadCategory = state.refs.categoriesByName.has(keyOfName(groupRow.category));
-                const category = await ensureCategory(groupRow.category, groupRow.amountMinor);
-                if (!hadCategory) createdCategories += 1;
+                const category = state.refs.categoriesByName.get(keyOfName(groupRow.category));
+                if (!category) throw new Error("Category not found after pre-create: " + groupRow.category);
 
                 groupAccounts.push(account);
                 groupCategories.push(category);
@@ -1034,12 +1186,27 @@
               const primaryPayee = groupRows.find((r) => r.payeeName) || null;
               let payeeRecord = null;
               if (primaryPayee) {
-                const candidateKeys = [keyOfName(primaryPayee.payeeName)];
-                const rawKey = keyOfName(primaryPayee.payeeRaw);
-                if (primaryPayee.payeeWasSplit && rawKey && !candidateKeys.includes(rawKey)) candidateKeys.push(rawKey);
-                const hadPayee = candidateKeys.some((k) => k && state.refs.payeesByName.has(k));
-                payeeRecord = await ensurePayeeForRow(primaryPayee);
-                if (!hadPayee && payeeRecord) createdPayees += 1;
+                const payeeEnsureKey = payeeEnsureKeyForRow(primaryPayee);
+                if (payeeEnsureFailedKeys.has(payeeEnsureKey)) {
+                  throw new Error("Payee pre-create failed: " + primaryPayee.payeeName);
+                }
+
+                const resolvedPayeeId = payeeEnsureResolvedIds.get(payeeEnsureKey);
+                if (resolvedPayeeId) {
+                  payeeRecord = { id: resolvedPayeeId };
+                } else {
+                  const candidateKeys = [keyOfName(primaryPayee.payeeName)];
+                  const rawKey = keyOfName(primaryPayee.payeeRaw);
+                  if (primaryPayee.payeeWasSplit && rawKey && !candidateKeys.includes(rawKey)) candidateKeys.push(rawKey);
+                  for (let p = 0; p < candidateKeys.length; p++) {
+                    const found = state.refs.payeesByName.get(candidateKeys[p]);
+                    if (found) {
+                      payeeRecord = found;
+                      break;
+                    }
+                  }
+                  if (!payeeRecord) throw new Error("Payee not found after pre-create: " + primaryPayee.payeeName);
+                }
               }
 
               const txnBody = {
@@ -1065,7 +1232,8 @@
                   skipped += groupRows.length;
                   processedRows += groupRows.length;
                   pushLog("warn", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " skipped: external_id already exists.");
-                  continue;
+                  maybeUpdateProgress();
+                  return;
                 }
                 throw errTxn;
               }
@@ -1098,10 +1266,7 @@
               if (groupRows.length === 2) pairedTxns += 1;
 
               processedRows += groupRows.length;
-              if (processedRows % 100 === 0) {
-                setStatus("", "Importing... " + processedRows + "/" + state.parsedRows.length + " rows processed.");
-                $("#importStats").textContent = "Processed " + processedRows + " / " + state.parsedRows.length + " rows...";
-              }
+              maybeUpdateProgress();
             } catch (rowErr) {
               if (rowErr && rowErr.isPayeeCardCategoryConflict) {
                 pushLog("bad", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " failed: " + rowErr.message);
@@ -1110,8 +1275,9 @@
               failed += groupRows.length;
               processedRows += groupRows.length;
               pushLog("bad", "Line " + groupRows[0].lineNo + (groupRows.length === 2 ? ("/" + groupRows[1].lineNo) : "") + " failed: " + (rowErr && rowErr.message ? rowErr.message : String(rowErr)));
+              maybeUpdateProgress();
             }
-          }
+          });
 
           const elapsedSec = ((Date.now() - started) / 1000).toFixed(1);
           const summary = [
@@ -1151,6 +1317,7 @@
         await ensureUsdAsset();
         const parsed = parseCsvRows(text, state.usdPrecision, state.refs.payeesByName);
         state.parsedRows = parsed.rows;
+        state.parsedRowsSortedByDate = !!parsed.isSortedByDate;
         renderPreview();
         setBusy();
         const badRow = firstInvalidRow(state.parsedRows);
@@ -1181,6 +1348,7 @@
       function setFile(file) {
         state.file = file || null;
         state.parsedRows = [];
+        state.parsedRowsSortedByDate = false;
         $("#previewBody").innerHTML = "";
         $("#previewSummary").textContent = "No parsed rows.";
         $("#fileInfo").textContent = file ? (file.name + " (" + file.size + " bytes)") : "No file loaded.";

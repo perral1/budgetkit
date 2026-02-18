@@ -82,6 +82,16 @@
     .btn:hover { border-color: var(--accent); }
     .btn.primary { border-color: rgba(110, 193, 255, 0.55); background: rgba(110, 193, 255, 0.2); }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn.tiny {
+      padding: 4px 8px;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+    .monthHead {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
     .logout {
       display: none;
       margin-left: 8px;
@@ -116,12 +126,30 @@
       align-items: center;
       gap: 8px;
     }
+    .yearValueWrap {
+      position: relative;
+      min-width: 70px;
+    }
     .yearValue {
       min-width: 70px;
       text-align: center;
       font-weight: 700;
       letter-spacing: 0.3px;
       font-family: var(--mono);
+      padding: 6px 0;
+      border-radius: 8px;
+    }
+    .yearValueWrap:focus-within .yearValue {
+      outline: 1px solid rgba(93, 208, 255, 0.7);
+      outline-offset: 1px;
+    }
+    .yearPicker {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
     }
     .small { color: var(--muted); font-size: 12px; }
     .tableWrap {
@@ -184,6 +212,12 @@
       background: rgba(17, 26, 38, 0.98);
       min-width: 220px;
     }
+    th.monthCol, td.monthCol {
+      width: 108px;
+      min-width: 108px;
+      max-width: 108px;
+    }
+    .monthSelectable { cursor: pointer; }
     td.group {
       color: var(--muted);
       font-weight: 700;
@@ -199,6 +233,7 @@
       overflow: hidden;
     }
     td.num { text-align: right; font-family: var(--mono); }
+    td.neutral { color: var(--text); }
     td.positive { color: #bff7df; }
     td.negative { color: #ffcccc; }
     td.editable {
@@ -271,7 +306,10 @@
         <div class="toolbar">
           <div class="yearNav">
             <button class="btn" id="btnPrevYear" type="button" aria-label="Previous year">&larr;</button>
-            <div id="yearValue" class="yearValue"></div>
+            <div class="yearValueWrap">
+              <div id="yearValue" class="yearValue"></div>
+              <select id="yearPicker" class="yearPicker" aria-label="Jump to year"></select>
+            </div>
             <button class="btn" id="btnNextYear" type="button" aria-label="Next year">&rarr;</button>
             <button class="btn" id="btnThisYear" type="button">Current Year</button>
           </div>
@@ -318,10 +356,11 @@
       const state = {
         loading: false,
         year: now.getFullYear(),
-        selectedMonth: now.getMonth() + 1,
+        selectedMonth: null,
         baseAssetPrecision: 2,
         categories: [],
         budgetByCategoryMonth: new Map(),
+        autoBudgetByCategoryMonth: new Map(),
         budgetLineRecordByKey: new Map(),
         activityByCategoryMonth: new Map(),
         openingByCategory: new Map(),
@@ -332,7 +371,8 @@
         editableRows: [],
         loadNotice: "",
         editing: null,
-        hideArchivedCategories: true
+        hideArchivedCategories: true,
+        selectableYears: []
       };
 
       function escapeHtml(v) {
@@ -397,6 +437,24 @@
 
       function monthKey(y, m) {
         return y + "-" + String(m).padStart(2, "0");
+      }
+
+      function shiftMonthKey(month, delta) {
+        const raw = String(month || "");
+        if (!/^\d{4}-\d{2}$/.test(raw) || !Number.isInteger(delta)) return "";
+        const year = Number(raw.slice(0, 4));
+        const mon = Number(raw.slice(5, 7));
+        if (!Number.isInteger(year) || !Number.isInteger(mon) || mon < 1 || mon > 12) return "";
+        const d = new Date(Date.UTC(year, mon - 1 + delta, 1));
+        return monthKey(d.getUTCFullYear(), d.getUTCMonth() + 1);
+      }
+
+      function roundDivHalfAwayFromZero(value, divisor) {
+        const n = Number(value || 0);
+        const d = Number(divisor || 0);
+        if (!Number.isFinite(n) || !Number.isFinite(d) || d === 0) return 0;
+        const absRounded = Math.round(Math.abs(n) / Math.abs(d));
+        return n < 0 ? -absRounded : absRounded;
       }
 
       function validYmd(raw) {
@@ -517,14 +575,77 @@
         $("#app").style.display = isLoggedIn ? "block" : "none";
       }
 
+      function sortedUniqueYears(years) {
+        return Array.from(new Set((years || []).filter((y) => Number.isInteger(y)))).sort((a, b) => a - b);
+      }
+
+      function isSelectableYear(year) {
+        return state.selectableYears.includes(Number(year));
+      }
+
+      function constrainYearToSelectable(year) {
+        const target = Number(year);
+        const years = state.selectableYears;
+        if (!Number.isInteger(target) || !years.length) return target;
+        if (years.includes(target)) return target;
+        if (target <= years[0]) return years[0];
+        if (target >= years[years.length - 1]) return years[years.length - 1];
+        let closest = years[0];
+        let smallestDelta = Math.abs(target - closest);
+        for (const y of years) {
+          const delta = Math.abs(target - y);
+          if (delta < smallestDelta) {
+            smallestDelta = delta;
+            closest = y;
+          }
+        }
+        return closest;
+      }
+
+      function getAdjacentSelectableYear(year, direction) {
+        const years = state.selectableYears;
+        if (!years.length) return null;
+        const current = Number(year);
+        if (!Number.isInteger(current)) return null;
+        if (direction < 0) {
+          for (let i = years.length - 1; i >= 0; i -= 1) {
+            if (years[i] < current) return years[i];
+          }
+          return null;
+        }
+        for (let i = 0; i < years.length; i += 1) {
+          if (years[i] > current) return years[i];
+        }
+        return null;
+      }
+
+      function updateYearNavigationUI() {
+        const year = Number(state.year);
+        $("#yearValue").textContent = Number.isInteger(year) ? String(year) : "";
+
+        const picker = $("#yearPicker");
+        const years = state.selectableYears.length ? state.selectableYears : [year];
+        picker.innerHTML = years.map((y) => '<option value="' + y + '">' + y + "</option>").join("");
+        if (isSelectableYear(year)) picker.value = String(year);
+
+        const disabledBase = state.loading || !SESSION.token;
+        const prevYear = getAdjacentSelectableYear(year, -1);
+        const nextYear = getAdjacentSelectableYear(year, 1);
+        $("#btnPrevYear").disabled = disabledBase || prevYear == null;
+        $("#btnNextYear").disabled = disabledBase || nextYear == null;
+        picker.disabled = disabledBase || years.length <= 1;
+      }
+
       function setBusy() {
         const disabled = state.loading || !SESSION.token;
         $("#btnRefresh").disabled = disabled;
-        $("#btnPrevYear").disabled = disabled;
-        $("#btnNextYear").disabled = disabled;
         $("#btnThisYear").disabled = disabled;
         $("#hideArchivedCategories").disabled = disabled;
         $("#btnLogin").disabled = state.loading;
+        document.querySelectorAll("[data-auto-budget='1']").forEach((btn) => {
+          btn.disabled = disabled;
+        });
+        updateYearNavigationUI();
       }
 
       function classifyError(err) {
@@ -715,23 +836,27 @@
       function buildGridRows() {
         const rows = [];
         const year = state.year;
+        const autoBudgetByMonth = new Map();
 
         for (const category of state.categories) {
           const id = String(category.id);
+          const parsed = splitCategoryName(category.name);
           let available = Number(state.openingByCategory.get(id) || 0);
           const months = [];
           for (let m = 1; m <= 12; m += 1) {
-            const key = id + "|" + monthKey(year, m);
+            const month = monthKey(year, m);
+            const key = id + "|" + month;
             const budgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
             const activity = Number(state.activityByCategoryMonth.get(key) || 0);
-              available = available + budgeted + activity;
-              months.push({
-                budgeted: budgeted,
-                activity: activity,
-                available: available
-              });
+            const autoBudgeted = computeAutoBudgetForCategory(id, parsed.groupName, month);
+            autoBudgetByMonth.set(key, autoBudgeted);
+            available = available + budgeted + activity;
+            months.push({
+              budgeted: budgeted,
+              activity: activity,
+              available: available
+            });
           }
-          const parsed = splitCategoryName(category.name);
           rows.push({
             id,
             name: String(category.name || ""),
@@ -752,6 +877,7 @@
 
         state.incomeRowsAll = rows.filter((r) => r.kind === "income");
         state.expenseRowsAll = rows.filter((r) => r.kind === "expense");
+        state.autoBudgetByCategoryMonth = autoBudgetByMonth;
         applyRowVisibility();
       }
 
@@ -764,27 +890,44 @@
 
       function renderTable() {
         const selected = state.selectedMonth;
+        const hasSelectedMonth = Number.isInteger(selected) && selected >= 1 && selected <= 12;
         const rowIndexById = new Map();
         for (let i = 0; i < state.editableRows.length; i += 1) {
           rowIndexById.set(String(state.editableRows[i].id), i);
         }
 
-        function renderSection(headEl, bodyEl, allRows, visibleRows, totalLabel) {
-          let top = '<tr><th class="group" rowspan="2">Group</th><th class="category" rowspan="2">Category</th>';
+        function renderSection(headEl, bodyEl, allRows, visibleRows, totalLabel, allowAutoBudget) {
+          let top = '<tr><th class="group" rowspan="' + (hasSelectedMonth ? "2" : "1") + '">Group</th><th class="category" rowspan="' + (hasSelectedMonth ? "2" : "1") + '">Category</th>';
+          const autoDisabledAttr = (state.loading || !SESSION.token) ? " disabled" : "";
+          function nonSelectedColorClass(budgeted, autoBudgeted) {
+            const delta = Number(budgeted || 0) - Number(autoBudgeted || 0);
+            if (delta === 0) return "neutral";
+            return delta > 0 ? "positive" : "negative";
+          }
           for (let m = 1; m <= 12; m += 1) {
-            if (m === selected) top += '<th colspan="3">' + MONTH_NAMES[m - 1] + "</th>";
-            else top += '<th rowspan="2" data-select-month="' + m + '" style="cursor:pointer;">' + MONTH_NAMES[m - 1] + "</th>";
+            if (hasSelectedMonth && m === selected) {
+              if (allowAutoBudget) {
+                top += '<th class="monthSelectable" colspan="3" data-select-month="' + m + '"><span class="monthHead">' + MONTH_NAMES[m - 1] + '<button class="btn tiny" type="button" data-auto-budget="1"' + autoDisabledAttr + '>Auto budget</button></span></th>';
+              } else {
+                top += '<th class="monthSelectable" colspan="3" data-select-month="' + m + '">' + MONTH_NAMES[m - 1] + "</th>";
+              }
+            } else {
+              top += '<th class="monthCol monthSelectable" rowspan="' + (hasSelectedMonth ? "2" : "1") + '" data-select-month="' + m + '">' + MONTH_NAMES[m - 1] + "</th>";
+            }
           }
           top += "</tr>";
 
-          let sub = "<tr>";
-          for (let m = 1; m <= 12; m += 1) {
-            if (m === selected) sub += "<th>Budgeted</th><th>Activity</th><th>Available</th>";
+          let sub = "";
+          if (hasSelectedMonth) {
+            sub = "<tr>";
+            for (let m = 1; m <= 12; m += 1) {
+              if (m === selected) sub += '<th class="monthCol">Budgeted</th><th class="monthCol">Activity</th><th class="monthCol">Available</th>';
+            }
+            sub += "</tr>";
           }
-          sub += "</tr>";
           headEl.innerHTML = top + sub;
 
-          const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+          const totals = Array.from({ length: 12 }, () => ({ budgeted: 0, autoBudgeted: 0, spent: 0, available: 0 }));
           const groupTotalsByName = new Map();
           const groupOrder = [];
           const visibleByGroup = new Map();
@@ -792,16 +935,19 @@
           for (const row of allRows) {
             let groupTotals = groupTotalsByName.get(row.groupName);
             if (!groupTotals) {
-              groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 }));
+              groupTotals = Array.from({ length: 12 }, () => ({ budgeted: 0, autoBudgeted: 0, spent: 0, available: 0 }));
               groupTotalsByName.set(row.groupName, groupTotals);
               groupOrder.push(row.groupName);
             }
             for (let m = 1; m <= 12; m += 1) {
               const cell = row.months[m - 1];
+              const autoBudgeted = Number(state.autoBudgetByCategoryMonth.get(String(row.id) + "|" + monthKey(state.year, m)) || 0);
               totals[m - 1].budgeted += cell.budgeted;
+              totals[m - 1].autoBudgeted += autoBudgeted;
               totals[m - 1].spent += cell.activity;
               totals[m - 1].available += cell.available;
               groupTotals[m - 1].budgeted += cell.budgeted;
+              groupTotals[m - 1].autoBudgeted += autoBudgeted;
               groupTotals[m - 1].spent += cell.activity;
               groupTotals[m - 1].available += cell.available;
             }
@@ -816,12 +962,13 @@
             let line = '<tr class="groupTotal"><td class="group">' + escapeHtml(groupName) + '</td><td class="category">Total</td>';
             for (let m = 1; m <= 12; m += 1) {
               const t = groupTotals[m - 1];
-              if (m === selected) {
-                line += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
-                line += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
-                line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+              if (hasSelectedMonth && m === selected) {
+                line += '<td class="num monthCol ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+                line += '<td class="num monthCol ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+                line += '<td class="num monthCol ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
               } else {
-                line += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
+                const cls = nonSelectedColorClass(t.budgeted, t.autoBudgeted);
+                line += '<td class="num monthCol monthSelectable ' + cls + '" data-select-month="' + m + '">' + fmtMoney(t.available) + "</td>";
               }
             }
             line += "</tr>";
@@ -836,29 +983,32 @@
               let line = '<tr><td class="group" title="' + escapeHtml(row.groupName) + '">' + escapeHtml(row.groupName) + '</td><td class="category" title="' + escapeHtml(categoryLabel) + '">' + escapeHtml(categoryLabel) + "</td>";
               for (let m = 1; m <= 12; m += 1) {
                 const cell = row.months[m - 1];
-                if (m === selected) {
-                  line += '<td class="num editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
-                  line += '<td class="num ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
-                  line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
+                if (hasSelectedMonth && m === selected) {
+                  line += '<td class="num monthCol editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
+                  line += '<td class="num monthCol ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
+                  line += '<td class="num monthCol ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
                 } else {
-                  line += '<td class="num ' + (cell.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(cell.available) + "</td>";
+                  const autoBudgeted = Number(state.autoBudgetByCategoryMonth.get(String(row.id) + "|" + monthKey(state.year, m)) || 0);
+                  const cls = nonSelectedColorClass(cell.budgeted, autoBudgeted);
+                  line += '<td class="num monthCol monthSelectable ' + cls + '" data-select-month="' + m + '">' + fmtMoney(cell.available) + "</td>";
                 }
               }
               line += "</tr>";
               rowsHtml.push(line);
             }
-            pushGroupTotal(groupName, groupTotalsByName.get(groupName) || Array.from({ length: 12 }, () => ({ budgeted: 0, spent: 0, available: 0 })));
+            pushGroupTotal(groupName, groupTotalsByName.get(groupName) || Array.from({ length: 12 }, () => ({ budgeted: 0, autoBudgeted: 0, spent: 0, available: 0 })));
           }
 
           let totalLine = '<tr class="total"><td class="group">' + escapeHtml(totalLabel) + '</td><td class="category">Total</td>';
           for (let m = 1; m <= 12; m += 1) {
             const t = totals[m - 1];
-            if (m === selected) {
-              totalLine += '<td class="num ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
-              totalLine += '<td class="num ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
-              totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+            if (hasSelectedMonth && m === selected) {
+              totalLine += '<td class="num monthCol ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+              totalLine += '<td class="num monthCol ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+              totalLine += '<td class="num monthCol ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
             } else {
-              totalLine += '<td class="num ' + (t.available < 0 ? "negative" : "positive") + '" data-select-month="' + m + '" style="cursor:pointer;">' + fmtMoney(t.available) + "</td>";
+              const cls = nonSelectedColorClass(t.budgeted, t.autoBudgeted);
+              totalLine += '<td class="num monthCol monthSelectable ' + cls + '" data-select-month="' + m + '">' + fmtMoney(t.available) + "</td>";
             }
           }
           totalLine += "</tr>";
@@ -866,20 +1016,121 @@
           bodyEl.innerHTML = rowsHtml.join("");
         }
 
-        renderSection($("#incomeHead"), $("#incomeBody"), state.incomeRowsAll, state.incomeRows, "All Income Groups");
-        renderSection($("#budgetHead"), $("#budgetBody"), state.expenseRowsAll, state.expenseRows, "All Expense Groups");
+        renderSection($("#incomeHead"), $("#incomeBody"), state.incomeRowsAll, state.incomeRows, "All Income Groups", false);
+        renderSection($("#budgetHead"), $("#budgetBody"), state.expenseRowsAll, state.expenseRows, "All Expense Groups", true);
 
-        const selectedName = MONTH_NAMES[selected - 1];
         const allRows = state.incomeRowsAll.concat(state.expenseRowsAll);
         const allGroups = new Set(allRows.map((r) => r.groupName));
         const archivedCount = allRows.filter((r) => r.isArchived).length;
         const hiddenCount = state.hideArchivedCategories ? archivedCount : 0;
-        $("#summaryLine").textContent = "Groups: " + allGroups.size + ". Categories shown: " + state.editableRows.length + " of " + allRows.length + (hiddenCount ? " (" + hiddenCount + " hidden archived)." : ".") + " Click any unselected month column to switch month. Non-selected months show end-of-month available. " + selectedName + " shows budgeted, spent, and available.";
-        $("#yearValue").textContent = String(state.year);
+        $("#summaryLine").textContent = "Groups: " + allGroups.size + ". Categories shown: " + state.editableRows.length + " of " + allRows.length + (hiddenCount ? " (" + hiddenCount + " hidden archived)." : ".") + (hasSelectedMonth ? " Click any month header or month cell to switch month. Click the selected month to clear selection. Non-selected months show end-of-month available. " + MONTH_NAMES[selected - 1] + " shows budgeted, spent, and available." : " No month selected. Click any month header or month cell to show budgeted, spent, and available for that month.");
+        updateYearNavigationUI();
       }
 
       function parseMoneyInput(raw) {
         return parseMajorToMinor(raw, state.baseAssetPrecision);
+      }
+
+      async function upsertBudgetForCategoryMonth(categoryId, month, budgeted) {
+        const key = String(categoryId) + "|" + String(month);
+        const existing = state.budgetLineRecordByKey.get(key);
+        if (existing && existing.id) {
+          await updateRecord("budget_lines", existing.id, { budgeted: budgeted });
+          existing.budgeted = budgeted;
+          state.budgetLineRecordByKey.set(key, existing);
+          state.budgetByCategoryMonth.set(key, budgeted);
+          return "updated";
+        }
+        const created = await createRecord("budget_lines", {
+          month: String(month),
+          category: String(categoryId),
+          budgeted: budgeted
+        });
+        state.budgetLineRecordByKey.set(key, {
+          id: String(created && created.id ? created.id : ""),
+          budgeted: budgeted
+        });
+        state.budgetByCategoryMonth.set(key, budgeted);
+        return "created";
+      }
+
+      function computeAutoBudgetForCategory(categoryId, groupNameRaw, month) {
+        categoryId = String(categoryId || "");
+        if (!categoryId || !/^\d{4}-\d{2}$/.test(String(month || ""))) return 0;
+        const groupName = String(groupNameRaw || "").trim().toLowerCase();
+        const currentKey = categoryId + "|" + month;
+        const currentActivity = Number(state.activityByCategoryMonth.get(currentKey) || 0);
+
+        if (groupName === "misc") return 0;
+        if (groupName === "savings") {
+          const prevMonth = shiftMonthKey(month, -1);
+          if (!prevMonth) return 0;
+          return Number(state.budgetByCategoryMonth.get(categoryId + "|" + prevMonth) || 0);
+        }
+        if (groupName === "sinking") {
+          let total = 0;
+          for (let offset = 0; offset <= 10; offset += 1) {
+            const m = shiftMonthKey(month, -offset);
+            if (!m) continue;
+            const activity = Number(state.activityByCategoryMonth.get(categoryId + "|" + m) || 0);
+            total += roundDivHalfAwayFromZero(activity, 12);
+          }
+          const month11 = shiftMonthKey(month, -11);
+          if (month11) {
+            const activity11 = Number(state.activityByCategoryMonth.get(categoryId + "|" + month11) || 0);
+            const roundedShare11 = roundDivHalfAwayFromZero(activity11, 12);
+            total += activity11 - (11 * roundedShare11);
+          }
+          return -total;
+        }
+        return -currentActivity;
+      }
+
+      async function applyAutoBudgetForSelectedMonth() {
+        if (state.loading || !SESSION.token) return;
+        if (!Number.isInteger(state.selectedMonth) || state.selectedMonth < 1 || state.selectedMonth > 12) {
+          setStatus("warn", "Select a month before using Auto budget.");
+          return;
+        }
+        if (state.editing) stopEditing();
+        const month = monthKey(state.year, state.selectedMonth);
+        const allRows = state.incomeRowsAll.concat(state.expenseRowsAll);
+        if (!allRows.length) {
+          setStatus("warn", "No budget categories were found.");
+          return;
+        }
+
+        state.loading = true;
+        setBusy();
+        let changed = 0;
+        let created = 0;
+        let updated = 0;
+        try {
+          for (const row of allRows) {
+            const categoryId = String(row.id);
+            const nextBudgeted = computeAutoBudgetForCategory(categoryId, row.groupName, month);
+            const key = categoryId + "|" + month;
+            const currentBudgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
+            if (nextBudgeted === currentBudgeted) continue;
+            const result = await upsertBudgetForCategoryMonth(categoryId, month, nextBudgeted);
+            changed += 1;
+            if (result === "created") created += 1;
+            else updated += 1;
+          }
+          buildGridRows();
+          renderTable();
+          if (changed === 0) {
+            setStatus("ok", "Auto budget applied for " + month + ": no changes were needed.");
+          } else {
+            setStatus("ok", "Auto budget applied for " + month + ". Updated: " + updated + ", created: " + created + ".");
+          }
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Auto budget failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
       }
 
       function stopEditing() {
@@ -1056,6 +1307,7 @@
       function resetModuleData() {
         state.categories = [];
         state.budgetByCategoryMonth = new Map();
+        state.autoBudgetByCategoryMonth = new Map();
         state.budgetLineRecordByKey = new Map();
         state.activityByCategoryMonth = new Map();
         state.openingByCategory = new Map();
@@ -1066,11 +1318,13 @@
         state.editableRows = [];
         state.loadNotice = "";
         state.editing = null;
+        state.selectableYears = [];
         $("#incomeHead").innerHTML = "";
         $("#incomeBody").innerHTML = "";
         $("#budgetHead").innerHTML = "";
         $("#budgetBody").innerHTML = "";
         $("#summaryLine").textContent = "";
+        updateYearNavigationUI();
       }
 
       async function loadBudgetData() {
@@ -1090,11 +1344,7 @@
             sort: "month",
             perPage: 500
           }),
-          listRecordsSafe("v_activity_by_category_month", {
-            filter: 'month <= "' + decKey + '"',
-            sort: "month",
-            perPage: 500
-          }),
+          listRecordsSafe("v_activity_by_category_month", { sort: "month", perPage: 500 }),
           listRecordsSafe("entries", {
             filter: 'status = "scheduled" && date <= "' + decYmd + 'T23:59:59.999Z"',
             sort: "date",
@@ -1133,6 +1383,7 @@
         const budgetByMonth = new Map();
         const budgetLineRecordByKey = new Map();
         const openingByCategory = new Map();
+        const activityYears = new Set();
         for (const line of budgetLines) {
           const catId = String(line.category || "");
           const month = String(line.month || "");
@@ -1158,6 +1409,7 @@
           const month = String(row.month || "");
           if (!/^\d{4}-\d{2}$/.test(month)) continue;
           const qty = parseMinorInt(row.activity || 0, "v_activity_by_category_month.activity");
+          if (qty !== 0) activityYears.add(Number(month.slice(0, 4)));
           if (month < janKey) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
           if (month >= janKey && month <= decKey) {
             const key = catId + "|" + month;
@@ -1217,6 +1469,9 @@
         state.budgetLineRecordByKey = budgetLineRecordByKey;
         state.activityByCategoryMonth = activityByMonth;
         state.openingByCategory = openingByCategory;
+        const selectableYears = sortedUniqueYears(Array.from(activityYears));
+        if (selectableYears.length) selectableYears.push(selectableYears[selectableYears.length - 1] + 1);
+        state.selectableYears = sortedUniqueYears(selectableYears.length ? selectableYears : [new Date().getFullYear()]);
         state.loadNotice = "";
         if (duplicateCategoryNames.size > 0) {
           state.loadNotice = "Some category names are not unique; activity rows were assigned to one category per name.";
@@ -1238,11 +1493,20 @@
         state.loading = true;
         setBusy();
         try {
+          let yearAdjusted = false;
           await loadBaseAssetPrecision();
           await loadBudgetData();
+          const constrainedYear = constrainYearToSelectable(state.year);
+          if (Number.isInteger(constrainedYear) && constrainedYear !== state.year) {
+            state.year = constrainedYear;
+            yearAdjusted = true;
+            await loadBudgetData();
+          }
           buildGridRows();
           renderTable();
-          if (state.loadNotice) setStatus("warn", state.loadNotice);
+          if (yearAdjusted) {
+            setStatus("warn", "Moved to " + state.year + " because only years with activity (and one year after last activity) are selectable.");
+          } else if (state.loadNotice) setStatus("warn", state.loadNotice);
           else setStatus("ok", "Loaded budget grid for " + state.year + ".");
         } catch (err) {
           const info = classifyError(err);
@@ -1321,17 +1585,33 @@
       });
       $("#btnPrevYear").addEventListener("click", async () => {
         if (state.loading) return;
-        state.year -= 1;
+        const prev = getAdjacentSelectableYear(state.year, -1);
+        if (prev == null) return;
+        state.year = prev;
         await refreshAll();
       });
       $("#btnNextYear").addEventListener("click", async () => {
         if (state.loading) return;
-        state.year += 1;
+        const next = getAdjacentSelectableYear(state.year, 1);
+        if (next == null) return;
+        state.year = next;
         await refreshAll();
       });
       $("#btnThisYear").addEventListener("click", async () => {
         if (state.loading) return;
-        state.year = new Date().getFullYear();
+        state.year = constrainYearToSelectable(new Date().getFullYear());
+        if (!Number.isInteger(state.year)) return;
+        if (state.selectableYears.length && !isSelectableYear(state.year)) return;
+        await refreshAll();
+      });
+      $("#yearPicker").addEventListener("change", async () => {
+        if (state.loading) return;
+        const nextYear = Number($("#yearPicker").value);
+        if (!Number.isInteger(nextYear) || !isSelectableYear(nextYear) || nextYear === state.year) {
+          updateYearNavigationUI();
+          return;
+        }
+        state.year = nextYear;
         await refreshAll();
       });
 
@@ -1350,12 +1630,31 @@
       });
 
       $("#app").addEventListener("click", async (ev) => {
+        const autoBtn = ev.target && ev.target.closest ? ev.target.closest("[data-auto-budget='1']") : null;
+        if (autoBtn) {
+          if (state.loading) return;
+          await applyAutoBudgetForSelectedMonth();
+          return;
+        }
+
         const target = ev.target && ev.target.closest ? ev.target.closest("[data-select-month]") : null;
         if (!target || state.loading) return;
         const m = Number(target.getAttribute("data-select-month"));
-        if (!Number.isFinite(m) || m < 1 || m > 12 || m === state.selectedMonth) return;
+        if (!Number.isFinite(m) || m < 1 || m > 12) return;
+        const isToggleOff = Number.isInteger(state.selectedMonth) && m === state.selectedMonth;
         if (state.editing) {
+          if (isToggleOff) {
+            await saveCurrentEditAndNavigate({});
+            state.selectedMonth = null;
+            renderTable();
+            return;
+          }
           await saveCurrentEditAndNavigate({ monthDelta: m - state.selectedMonth });
+          return;
+        }
+        if (isToggleOff) {
+          state.selectedMonth = null;
+          renderTable();
           return;
         }
         state.selectedMonth = m;
@@ -1364,7 +1663,7 @@
 
       $("#pbUrl").value = store.get("pbUrl", "");
       $("#pbEmail").value = store.get("pbEmail", "");
-      $("#yearValue").textContent = String(state.year);
+      updateYearNavigationUI();
       $("#hideArchivedCategories").checked = state.hideArchivedCategories;
 
       (async function init() {

@@ -146,6 +146,21 @@
 
       <div class="row">
         <div class="field" style="min-width:280px;">
+          <label for="presetSelect">Delete preset</label>
+          <select id="presetSelect">
+            <option value="">(none)</option>
+            <option value="core_budget_wipe">Core budget wipe (entries -> txns -> payees -> budget_lines -> categories -> accounts -> assets)</option>
+          </select>
+        </div>
+        <div class="field" style="min-width:280px;">
+          <label for="presetConfirmText">Type preset key to enable preset delete</label>
+          <input id="presetConfirmText" type="text" placeholder="core_budget_wipe" />
+        </div>
+        <button id="btnDeletePreset" class="btn danger" type="button" disabled>Run preset delete</button>
+      </div>
+
+      <div class="row">
+        <div class="field" style="min-width:280px;">
           <label for="collectionManual">Manual collection override (optional)</label>
           <input id="collectionManual" type="text" placeholder="e.g. entries" />
         </div>
@@ -192,6 +207,9 @@
 
   const SESSION = { base: "", token: "" };
   const state = { collections: [], busy: false };
+  const DELETE_PRESETS = {
+    core_budget_wipe: ["entries", "txns", "payees", "budget_lines", "categories", "accounts", "assets"]
+  };
 
   function setStatus(message, kind){
     const box = $("#statusBox");
@@ -215,6 +233,9 @@
     const target = getTargetCollection();
     const confirm = ($("#confirmText").value || "").trim();
     $("#btnDeleteAll").disabled = state.busy || !target || confirm !== target;
+    const presetKey = ($("#presetSelect").value || "").trim();
+    const presetConfirm = ($("#presetConfirmText").value || "").trim();
+    $("#btnDeletePreset").disabled = state.busy || !presetKey || presetConfirm !== presetKey;
   }
 
   function setBusy(isBusy){
@@ -222,6 +243,8 @@
     $("#btnLogin").disabled = isBusy;
     $("#btnReloadCollections").disabled = isBusy;
     $("#btnInspect").disabled = isBusy;
+    $("#presetSelect").disabled = isBusy;
+    $("#presetConfirmText").disabled = isBusy;
     $("#collectionSelect").disabled = isBusy;
     $("#collectionManual").disabled = isBusy;
     $("#confirmText").disabled = isBusy;
@@ -486,6 +509,63 @@
     }
   }
 
+  async function deleteCollectionRowsInternal(collection){
+    const progress = { deleted: 0, failed: 0, scanned: 0, firstError: "" };
+
+    while(true){
+      const page = await listRecordsPage(collection, 1, 200);
+      const ids = page.items.map((r) => r && r.id).filter(Boolean);
+      progress.scanned += ids.length;
+
+      if(!ids.length){
+        break;
+      }
+
+      await deleteBatch(collection, ids, progress);
+      setStatus(
+        "Deleting `" + collection + "`: deleted=" + progress.deleted + ", failed=" + progress.failed + ", latest batch=" + ids.length + ".",
+        progress.failed ? "warn" : "ok"
+      );
+    }
+
+    return progress;
+  }
+
+  async function deletePresetRows(){
+    const presetKey = ($("#presetSelect").value || "").trim();
+    const confirmKey = ($("#presetConfirmText").value || "").trim();
+    const collections = DELETE_PRESETS[presetKey] || null;
+
+    if(!presetKey || !collections){
+      setStatus("Select a valid preset.", "warn");
+      return;
+    }
+    if(confirmKey !== presetKey){
+      setStatus("Type the exact preset key to enable preset delete.", "warn");
+      return;
+    }
+
+    const confirmed = window.confirm("Run preset `" + presetKey + "`?\nThis deletes all rows in order: " + collections.join(" -> ") + "\nThis cannot be undone.");
+    if(!confirmed) return;
+
+    setBusy(true);
+    const summary = [];
+
+    try {
+      for(const collection of collections){
+        setStatus("Running preset `" + presetKey + "`: deleting `" + collection + "`...", "warn");
+        const result = await deleteCollectionRowsInternal(collection);
+        summary.push(collection + " [deleted=" + result.deleted + ", failed=" + result.failed + "]");
+      }
+      $("#inspectInfo").textContent = "Last preset run `" + presetKey + "`: " + summary.join("; ");
+      setStatus("Preset delete completed: " + summary.join("; "), "ok");
+    } catch (e) {
+      setStatus("Preset delete failed: " + (e && e.message ? e.message : String(e)), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   $("#btnLogin").addEventListener("click", async () => {
     const base = ($("#pbUrl").value || "").trim().replace(/\/+$/, "");
     const email = ($("#pbEmail").value || "").trim();
@@ -539,6 +619,8 @@
     $("#pbUrl").value = "";
     $("#pbEmail").value = "";
     $("#pbPass").value = "";
+    $("#presetSelect").value = "";
+    $("#presetConfirmText").value = "";
     $("#collectionManual").value = "";
     $("#confirmText").value = "";
     $("#inspectInfo").textContent = "Collection details not loaded.";
@@ -556,6 +638,7 @@
 
   $("#btnInspect").addEventListener("click", inspectCollection);
   $("#btnDeleteAll").addEventListener("click", deleteAllRows);
+  $("#btnDeletePreset").addEventListener("click", deletePresetRows);
 
   $("#collectionSelect").addEventListener("change", () => {
     updateDeleteButtonState();
@@ -565,6 +648,11 @@
     updateDeleteButtonState();
     $("#inspectInfo").textContent = "Collection details not loaded.";
   });
+  $("#presetSelect").addEventListener("change", () => {
+    updateDeleteButtonState();
+    $("#inspectInfo").textContent = "Collection details not loaded.";
+  });
+  $("#presetConfirmText").addEventListener("input", updateDeleteButtonState);
   $("#confirmText").addEventListener("input", updateDeleteButtonState);
 
   $("#pbUrl").value = store.get("pbUrl", "");
