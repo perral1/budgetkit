@@ -54,6 +54,15 @@ Fields:
 - `is_archived` (bool, default `false`)
 - `meta` (json)
 
+`meta` conventions:
+- `meta.autobudget` (text, optional) controls budget-module auto-assignment behavior per category.
+- Supported values:
+  - `sinking`
+  - `same-budget` (same behavior as historical `savings`)
+  - `balance-budget` (same behavior as historical default: invert current-month activity)
+  - `zero-budget` (same behavior as historical `misc`)
+- Any missing/unknown value means no auto-budget action for that category (leave existing budgeted value unchanged).
+
 Required `kind` values:
 - `income`
 - `expense`
@@ -61,6 +70,7 @@ Required `kind` values:
 - `trade_cash`
 - `trade_asset`
 - `fee`
+- `payroll`
 - `withholding`
 - `benefit`
 - `employer_contrib`

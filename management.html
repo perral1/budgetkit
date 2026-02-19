@@ -625,12 +625,12 @@
       label: "Categories",
       help: [
         "Schema: name (required), parent (optional relation → categories), kind (required), is_archived (bool), meta (json).",
-        "Kind enum: income, expense, transfer, trade_cash, trade_asset, fee, withholding, benefit, employer_contrib, info, other."
+        "Kind enum: income, expense, transfer, trade_cash, trade_asset, fee, payroll, withholding, benefit, employer_contrib, info, other."
       ].join("\n"),
       fields: [
         { key:"name", label:"Name", type:"text", required:true, placeholder:"Groceries" },
         { key:"kind", label:"Kind", type:"select", required:true, options:[
-          "income","expense","transfer","trade_cash","trade_asset","fee","withholding","benefit","employer_contrib","info","other"
+          "income","expense","transfer","trade_cash","trade_asset","fee","payroll","withholding","benefit","employer_contrib","info","other"
         ]},
         { key:"parent", label:"Parent Category", type:"relation", required:false, relation:"categories", placeholder:"(optional)" },
         { key:"is_archived", label:"Archived", type:"bool", required:false },

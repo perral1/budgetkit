@@ -6,6 +6,7 @@ BudgetKit is a PocketBase-backed budgeting toolkit built as standalone HTML modu
 
 - [Budget](budget.html)
 - [Core Transaction Register](transaction_register.html)
+- [Income Register](income_register.html)
 - [Management (Accounts, Assets, Categories, Payees)](management.html)
 - [CSV Importer](importers/txn_csv_importer.html)
 - [Budget CSV Importer](importers/budget_csv_importer.html)

@@ -259,6 +259,9 @@
 
       const PAYEE_CARD_CATEGORIES = ["restaurant", "intlrest", "grocery", "airlines", "hotel", "rental", "parking", "toll", "taxi"];
       const TXN_IMPORT_CONCURRENCY = 6;
+      const SHARED_SAVINGS_CATEGORY_KEY = "savings: shared";
+      const SHARED_SAVINGS_SHARON = "Savings: Sharon";
+      const SHARED_SAVINGS_TAYLOR = "Savings: Taylor";
 
       function setStatus(kind, message) {
         const box = $("#statusBox");
@@ -547,6 +550,31 @@
         return "other";
       }
 
+      function isSharedSavingsCategory(name) {
+        return keyOfName(name) === SHARED_SAVINGS_CATEGORY_KEY;
+      }
+
+      function roundHalfEven(value) {
+        if (!Number.isFinite(value)) throw new Error("Amount must be numeric.");
+        const lower = Math.floor(value);
+        const upper = Math.ceil(value);
+        if (lower === upper) return lower;
+        const dLower = Math.abs(value - lower);
+        const dUpper = Math.abs(value - upper);
+        if (dLower < dUpper) return lower;
+        if (dUpper < dLower) return upper;
+        return Math.abs(lower % 2) === 0 ? lower : upper;
+      }
+
+      function splitSharedSavingsAmountMinor(amountMinor) {
+        const sharonMinor = roundHalfEven(amountMinor / 2);
+        const taylorMinor = amountMinor - sharonMinor;
+        if (!Number.isSafeInteger(sharonMinor) || !Number.isSafeInteger(taylorMinor)) {
+          throw new Error("Amount split is too large.");
+        }
+        return { sharonMinor, taylorMinor };
+      }
+
       function csvParse(text) {
         const rows = [];
         let i = 0;
@@ -660,7 +688,7 @@
             prevDate = date;
           }
 
-          out.push({
+          const baseRow = {
             lineNo: r + 1,
             date: date,
             account: account,
@@ -672,8 +700,30 @@
             subcategory: subcategory,
             memo: memo,
             amountMinor: amountMinor,
-            status: status
-          });
+            status: status,
+            splitGroupType: "",
+            splitGroupKey: ""
+          };
+
+          if (isSharedSavingsCategory(category)) {
+            const split = splitSharedSavingsAmountMinor(amountMinor);
+            const splitGroupKey = "savings-shared:" + String(r + 1);
+            out.push(Object.assign({}, baseRow, {
+              category: SHARED_SAVINGS_SHARON,
+              amountMinor: split.sharonMinor,
+              splitGroupType: "savings_shared",
+              splitGroupKey: splitGroupKey
+            }));
+            out.push(Object.assign({}, baseRow, {
+              category: SHARED_SAVINGS_TAYLOR,
+              amountMinor: split.taylorMinor,
+              splitGroupType: "savings_shared",
+              splitGroupKey: splitGroupKey
+            }));
+            continue;
+          }
+
+          out.push(baseRow);
         }
 
         return {
@@ -995,6 +1045,18 @@
         return -1;
       }
 
+      function findSplitPairIndex(rows, index, consumedIndexes) {
+        const row = rows[index];
+        if (!row || !row.splitGroupType || !row.splitGroupKey) return -1;
+        for (let j = index + 1; j < rows.length; j++) {
+          if (consumedIndexes.has(j)) continue;
+          const candidate = rows[j];
+          if (!candidate) continue;
+          if (candidate.splitGroupType === row.splitGroupType && candidate.splitGroupKey === row.splitGroupKey) return j;
+        }
+        return -1;
+      }
+
       async function importRows() {
         state.importing = true;
         setBusy();
@@ -1152,9 +1214,19 @@
               continue;
             }
 
-            const pairIndex = findPairedTransferIndex(state.parsedRows, i, consumedIndexes, state.parsedRowsSortedByDate);
-            const groupRows = pairIndex >= 0 ? [row, state.parsedRows[pairIndex]] : [row];
-            if (pairIndex >= 0) consumedIndexes.add(pairIndex);
+            let groupRows = [row];
+            if (row.splitGroupType === "savings_shared") {
+              const splitPairIndex = findSplitPairIndex(state.parsedRows, i, consumedIndexes);
+              if (splitPairIndex < 0) throw new Error("Internal split-pairing failed for line " + row.lineNo + ".");
+              groupRows = [row, state.parsedRows[splitPairIndex]];
+              consumedIndexes.add(splitPairIndex);
+            } else {
+              const pairIndex = findPairedTransferIndex(state.parsedRows, i, consumedIndexes, state.parsedRowsSortedByDate);
+              if (pairIndex >= 0) {
+                groupRows = [row, state.parsedRows[pairIndex]];
+                consumedIndexes.add(pairIndex);
+              }
+            }
             importGroups.push(groupRows);
           }
 
@@ -1263,7 +1335,7 @@
 
               createdTxns += 1;
               createdEntries += groupRows.length;
-              if (groupRows.length === 2) pairedTxns += 1;
+              if (groupRows.length === 2 && groupRows.every((r) => isTransferCategory(r.category))) pairedTxns += 1;
 
               processedRows += groupRows.length;
               maybeUpdateProgress();

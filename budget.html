@@ -16,6 +16,11 @@
       --ok: #38d39f;
       --warn: #ffd479;
       --bad: #ff8a8a;
+      --sel-month-head: rgba(110, 193, 255, 0.2);
+      --sel-month-outline: rgba(110, 193, 255, 0.55);
+      --col-budget-bg: rgba(110, 193, 255, 0.11);
+      --col-activity-bg: rgba(255, 212, 121, 0.1);
+      --col-available-bg: rgba(56, 211, 159, 0.12);
       --radius: 12px;
       --shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
       --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -217,6 +222,22 @@
       min-width: 108px;
       max-width: 108px;
     }
+    th.selectedMonthHead {
+      background: linear-gradient(180deg, var(--sel-month-head), rgba(17, 26, 38, 0.98));
+      box-shadow: inset 0 -1px 0 var(--sel-month-outline);
+      color: #d8eeff;
+    }
+    th.metricBudget { background: var(--col-budget-bg); color: #d8eeff; }
+    th.metricActivity { background: var(--col-activity-bg); color: #ffedc8; }
+    th.metricAvailable { background: var(--col-available-bg); color: #d3f8ea; }
+    td.metricBudget { background: var(--col-budget-bg); }
+    td.metricActivity { background: var(--col-activity-bg); }
+    td.metricAvailable { background: var(--col-available-bg); }
+    td.metricBudget,
+    td.metricActivity,
+    td.metricAvailable {
+      border-right-color: rgba(255, 255, 255, 0.1);
+    }
     .monthSelectable { cursor: pointer; }
     td.group {
       color: var(--muted);
@@ -261,14 +282,52 @@
     }
     tr.total td {
       font-weight: 700;
-      background: rgba(25, 39, 59, 0.65);
+      background: linear-gradient(180deg, rgba(35, 54, 80, 0.95), rgba(24, 38, 58, 0.95));
+      border-top: 1px solid rgba(110, 193, 255, 0.35);
+      border-bottom: 1px solid rgba(110, 193, 255, 0.35);
     }
     tr.groupTotal td {
       font-weight: 700;
-      background: rgba(22, 34, 52, 0.75);
+      background: linear-gradient(180deg, rgba(28, 44, 66, 0.9), rgba(21, 34, 52, 0.9));
+      border-top: 1px solid rgba(160, 190, 230, 0.2);
+      border-bottom: 1px solid rgba(160, 190, 230, 0.2);
     }
     tr:hover td { background: rgba(110, 193, 255, 0.06); }
     tr:hover td.group, tr:hover td.category { background: rgba(25, 39, 59, 0.95); }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 10, 16, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 16px;
+    }
+    .modal.open { display: flex; }
+    .modalCard {
+      width: min(460px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(17, 26, 38, 0.98);
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+    .modalTitle {
+      margin: 0 0 6px 0;
+      font-size: 16px;
+    }
+    .modalSub {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 0 0 12px 0;
+    }
+    .modalActions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     @media (max-width: 900px) {
       .auth .field { min-width: 100%; }
       .auth input[type="text"], .auth input[type="password"] { width: 100%; }
@@ -312,6 +371,7 @@
             </div>
             <button class="btn" id="btnNextYear" type="button" aria-label="Next year">&rarr;</button>
             <button class="btn" id="btnThisYear" type="button">Current Year</button>
+            <button class="btn" id="btnAutoBudgetYear" type="button">Autobudget</button>
           </div>
           <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
             <button class="btn" id="btnRefresh" type="button">Refresh</button>
@@ -337,6 +397,17 @@
       </section>
     </div>
   </div>
+  <div id="autoBudgetScopeModal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="autoBudgetScopeTitle">
+    <div class="modalCard">
+      <h2 id="autoBudgetScopeTitle" class="modalTitle">Autobudget scope</h2>
+      <p class="modalSub">Choose how far to apply autobudget changes.</p>
+      <div class="modalActions">
+        <button class="btn" id="btnAutoBudgetScopeCancel" type="button">Cancel</button>
+        <button class="btn" id="btnAutoBudgetScopeAll" type="button">All dates</button>
+        <button class="btn primary" id="btnAutoBudgetScopeYear" type="button">Current year</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     (() => {
@@ -344,6 +415,7 @@
 
       const $ = (sel) => document.querySelector(sel);
       const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      let autoBudgetScopeResolver = null;
 
       const store = {
         get(k, d = "") { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
@@ -640,6 +712,7 @@
         const disabled = state.loading || !SESSION.token;
         $("#btnRefresh").disabled = disabled;
         $("#btnThisYear").disabled = disabled;
+        $("#btnAutoBudgetYear").disabled = disabled;
         $("#hideArchivedCategories").disabled = disabled;
         $("#btnLogin").disabled = state.loading;
         document.querySelectorAll("[data-auto-budget='1']").forEach((btn) => {
@@ -833,6 +906,33 @@
         return { groupName, categoryName };
       }
 
+      function parseJsonObjectSafe(raw) {
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+        if (typeof raw !== "string") return null;
+        const text = raw.trim();
+        if (!text) return null;
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        } catch {}
+        return null;
+      }
+
+      function normalizeAutoBudgetMode(rawMode) {
+        const mode = String(rawMode || "").trim().toLowerCase();
+        if (mode === "sinking") return "sinking";
+        if (mode === "same-budget" || mode === "savings") return "same-budget";
+        if (mode === "balance-budget") return "balance-budget";
+        if (mode === "zero-budget" || mode === "misc") return "zero-budget";
+        return "";
+      }
+
+      function autoBudgetModeFromCategoryMeta(metaRaw) {
+        const meta = parseJsonObjectSafe(metaRaw);
+        if (!meta) return "";
+        return normalizeAutoBudgetMode(meta.autobudget);
+      }
+
       function buildGridRows() {
         const rows = [];
         const year = state.year;
@@ -841,6 +941,7 @@
         for (const category of state.categories) {
           const id = String(category.id);
           const parsed = splitCategoryName(category.name);
+          const autoBudgetMode = autoBudgetModeFromCategoryMeta(category.meta);
           let available = Number(state.openingByCategory.get(id) || 0);
           const months = [];
           for (let m = 1; m <= 12; m += 1) {
@@ -848,7 +949,7 @@
             const key = id + "|" + month;
             const budgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
             const activity = Number(state.activityByCategoryMonth.get(key) || 0);
-            const autoBudgeted = computeAutoBudgetForCategory(id, parsed.groupName, month);
+            const autoBudgeted = computeAutoBudgetForCategory(id, autoBudgetMode, month);
             autoBudgetByMonth.set(key, autoBudgeted);
             available = available + budgeted + activity;
             months.push({
@@ -864,6 +965,7 @@
             isArchived: category.is_archived === true,
             groupName: parsed.groupName,
             categoryName: parsed.categoryName,
+            autoBudgetMode: autoBudgetMode,
             months
           });
         }
@@ -907,9 +1009,9 @@
           for (let m = 1; m <= 12; m += 1) {
             if (hasSelectedMonth && m === selected) {
               if (allowAutoBudget) {
-                top += '<th class="monthSelectable" colspan="3" data-select-month="' + m + '"><span class="monthHead">' + MONTH_NAMES[m - 1] + '<button class="btn tiny" type="button" data-auto-budget="1"' + autoDisabledAttr + '>Auto budget</button></span></th>';
+                top += '<th class="monthSelectable selectedMonthHead" colspan="3" data-select-month="' + m + '"><span class="monthHead">' + MONTH_NAMES[m - 1] + '<button class="btn tiny" type="button" data-auto-budget="1"' + autoDisabledAttr + '>Auto budget</button></span></th>';
               } else {
-                top += '<th class="monthSelectable" colspan="3" data-select-month="' + m + '">' + MONTH_NAMES[m - 1] + "</th>";
+                top += '<th class="monthSelectable selectedMonthHead" colspan="3" data-select-month="' + m + '">' + MONTH_NAMES[m - 1] + "</th>";
               }
             } else {
               top += '<th class="monthCol monthSelectable" rowspan="' + (hasSelectedMonth ? "2" : "1") + '" data-select-month="' + m + '">' + MONTH_NAMES[m - 1] + "</th>";
@@ -921,7 +1023,7 @@
           if (hasSelectedMonth) {
             sub = "<tr>";
             for (let m = 1; m <= 12; m += 1) {
-              if (m === selected) sub += '<th class="monthCol">Budgeted</th><th class="monthCol">Activity</th><th class="monthCol">Available</th>';
+              if (m === selected) sub += '<th class="monthCol metricBudget">Budgeted</th><th class="monthCol metricActivity">Activity</th><th class="monthCol metricAvailable">Available</th>';
             }
             sub += "</tr>";
           }
@@ -963,9 +1065,9 @@
             for (let m = 1; m <= 12; m += 1) {
               const t = groupTotals[m - 1];
               if (hasSelectedMonth && m === selected) {
-                line += '<td class="num monthCol ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
-                line += '<td class="num monthCol ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
-                line += '<td class="num monthCol ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+                line += '<td class="num monthCol metricBudget ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+                line += '<td class="num monthCol metricActivity ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+                line += '<td class="num monthCol metricAvailable ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
               } else {
                 const cls = nonSelectedColorClass(t.budgeted, t.autoBudgeted);
                 line += '<td class="num monthCol monthSelectable ' + cls + '" data-select-month="' + m + '">' + fmtMoney(t.available) + "</td>";
@@ -984,9 +1086,9 @@
               for (let m = 1; m <= 12; m += 1) {
                 const cell = row.months[m - 1];
                 if (hasSelectedMonth && m === selected) {
-                  line += '<td class="num monthCol editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
-                  line += '<td class="num monthCol ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
-                  line += '<td class="num monthCol ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
+                  line += '<td class="num monthCol metricBudget editable ' + (cell.budgeted < 0 ? "negative" : "positive") + '" data-edit-budgeted="1" data-category-id="' + escapeHtml(row.id) + '" data-row-index="' + editIndex + '">' + fmtMoney(cell.budgeted) + "</td>";
+                  line += '<td class="num monthCol metricActivity ' + (cell.activity < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.activity) + "</td>";
+                  line += '<td class="num monthCol metricAvailable ' + (cell.available < 0 ? "negative" : "positive") + '">' + fmtMoney(cell.available) + "</td>";
                 } else {
                   const autoBudgeted = Number(state.autoBudgetByCategoryMonth.get(String(row.id) + "|" + monthKey(state.year, m)) || 0);
                   const cls = nonSelectedColorClass(cell.budgeted, autoBudgeted);
@@ -1003,9 +1105,9 @@
           for (let m = 1; m <= 12; m += 1) {
             const t = totals[m - 1];
             if (hasSelectedMonth && m === selected) {
-              totalLine += '<td class="num monthCol ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
-              totalLine += '<td class="num monthCol ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
-              totalLine += '<td class="num monthCol ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
+              totalLine += '<td class="num monthCol metricBudget ' + (t.budgeted < 0 ? "negative" : "positive") + '">' + fmtMoney(t.budgeted) + "</td>";
+              totalLine += '<td class="num monthCol metricActivity ' + (t.spent < 0 ? "negative" : "positive") + '">' + fmtMoney(t.spent) + "</td>";
+              totalLine += '<td class="num monthCol metricAvailable ' + (t.available < 0 ? "negative" : "positive") + '">' + fmtMoney(t.available) + "</td>";
             } else {
               const cls = nonSelectedColorClass(t.budgeted, t.autoBudgeted);
               totalLine += '<td class="num monthCol monthSelectable ' + cls + '" data-select-month="' + m + '">' + fmtMoney(t.available) + "</td>";
@@ -1032,13 +1134,23 @@
       }
 
       async function upsertBudgetForCategoryMonth(categoryId, month, budgeted) {
+        return upsertBudgetForCategoryMonthWithMaps(
+          categoryId,
+          month,
+          budgeted,
+          state.budgetByCategoryMonth,
+          state.budgetLineRecordByKey
+        );
+      }
+
+      async function upsertBudgetForCategoryMonthWithMaps(categoryId, month, budgeted, budgetMap, recordMap) {
         const key = String(categoryId) + "|" + String(month);
-        const existing = state.budgetLineRecordByKey.get(key);
+        const existing = recordMap.get(key);
         if (existing && existing.id) {
           await updateRecord("budget_lines", existing.id, { budgeted: budgeted });
           existing.budgeted = budgeted;
-          state.budgetLineRecordByKey.set(key, existing);
-          state.budgetByCategoryMonth.set(key, budgeted);
+          recordMap.set(key, existing);
+          budgetMap.set(key, budgeted);
           return "updated";
         }
         const created = await createRecord("budget_lines", {
@@ -1046,44 +1158,58 @@
           category: String(categoryId),
           budgeted: budgeted
         });
-        state.budgetLineRecordByKey.set(key, {
+        recordMap.set(key, {
           id: String(created && created.id ? created.id : ""),
           budgeted: budgeted
         });
-        state.budgetByCategoryMonth.set(key, budgeted);
+        budgetMap.set(key, budgeted);
         return "created";
       }
 
-      function computeAutoBudgetForCategory(categoryId, groupNameRaw, month) {
+      function computeAutoBudgetForCategory(categoryId, autoBudgetModeRaw, month) {
+        return computeAutoBudgetForCategoryWithMaps(
+          categoryId,
+          autoBudgetModeRaw,
+          month,
+          state.budgetByCategoryMonth,
+          state.activityByCategoryMonth
+        );
+      }
+
+      function computeAutoBudgetForCategoryWithMaps(categoryId, autoBudgetModeRaw, month, budgetByCategoryMonth, activityByCategoryMonth) {
         categoryId = String(categoryId || "");
         if (!categoryId || !/^\d{4}-\d{2}$/.test(String(month || ""))) return 0;
-        const groupName = String(groupNameRaw || "").trim().toLowerCase();
+        const mode = normalizeAutoBudgetMode(autoBudgetModeRaw);
         const currentKey = categoryId + "|" + month;
-        const currentActivity = Number(state.activityByCategoryMonth.get(currentKey) || 0);
+        const currentBudgeted = Number(budgetByCategoryMonth.get(currentKey) || 0);
+        const currentActivity = Number(activityByCategoryMonth.get(currentKey) || 0);
 
-        if (groupName === "misc") return 0;
-        if (groupName === "savings") {
+        // Missing/unknown mode: leave existing category-month budget unchanged.
+        if (!mode) return currentBudgeted;
+        if (mode === "zero-budget") return 0;
+        if (mode === "same-budget") {
           const prevMonth = shiftMonthKey(month, -1);
           if (!prevMonth) return 0;
-          return Number(state.budgetByCategoryMonth.get(categoryId + "|" + prevMonth) || 0);
+          return Number(budgetByCategoryMonth.get(categoryId + "|" + prevMonth) || 0);
         }
-        if (groupName === "sinking") {
+        if (mode === "sinking") {
           let total = 0;
           for (let offset = 0; offset <= 10; offset += 1) {
             const m = shiftMonthKey(month, -offset);
             if (!m) continue;
-            const activity = Number(state.activityByCategoryMonth.get(categoryId + "|" + m) || 0);
+            const activity = Number(activityByCategoryMonth.get(categoryId + "|" + m) || 0);
             total += roundDivHalfAwayFromZero(activity, 12);
           }
           const month11 = shiftMonthKey(month, -11);
           if (month11) {
-            const activity11 = Number(state.activityByCategoryMonth.get(categoryId + "|" + month11) || 0);
+            const activity11 = Number(activityByCategoryMonth.get(categoryId + "|" + month11) || 0);
             const roundedShare11 = roundDivHalfAwayFromZero(activity11, 12);
             total += activity11 - (11 * roundedShare11);
           }
           return -total;
         }
-        return -currentActivity;
+        if (mode === "balance-budget") return -currentActivity;
+        return currentBudgeted;
       }
 
       async function applyAutoBudgetForSelectedMonth() {
@@ -1108,7 +1234,7 @@
         try {
           for (const row of allRows) {
             const categoryId = String(row.id);
-            const nextBudgeted = computeAutoBudgetForCategory(categoryId, row.groupName, month);
+            const nextBudgeted = computeAutoBudgetForCategory(categoryId, row.autoBudgetMode, month);
             const key = categoryId + "|" + month;
             const currentBudgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
             if (nextBudgeted === currentBudgeted) continue;
@@ -1131,6 +1257,222 @@
           state.loading = false;
           setBusy();
         }
+      }
+
+      async function applyAutoBudgetForYear() {
+        if (state.loading || !SESSION.token) return;
+        if (state.editing) stopEditing();
+        const allRows = state.incomeRowsAll.concat(state.expenseRowsAll);
+        if (!allRows.length) {
+          setStatus("warn", "No budget categories were found.");
+          return;
+        }
+
+        state.loading = true;
+        setBusy();
+        let changed = 0;
+        let created = 0;
+        let updated = 0;
+        try {
+          for (let m = 1; m <= 12; m += 1) {
+            const month = monthKey(state.year, m);
+            for (const row of allRows) {
+              const categoryId = String(row.id);
+              const nextBudgeted = computeAutoBudgetForCategory(categoryId, row.autoBudgetMode, month);
+              const key = categoryId + "|" + month;
+              const currentBudgeted = Number(state.budgetByCategoryMonth.get(key) || 0);
+              if (nextBudgeted === currentBudgeted) continue;
+              const result = await upsertBudgetForCategoryMonth(categoryId, month, nextBudgeted);
+              changed += 1;
+              if (result === "created") created += 1;
+              else updated += 1;
+            }
+          }
+          buildGridRows();
+          renderTable();
+          if (changed === 0) {
+            setStatus("ok", "Auto budget applied for year " + state.year + ": no changes were needed.");
+          } else {
+            setStatus("ok", "Auto budget applied for year " + state.year + ". Updated: " + updated + ", created: " + created + ".");
+          }
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Auto budget failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      function monthRangeInclusive(startMonth, endMonth) {
+        const start = String(startMonth || "");
+        const end = String(endMonth || "");
+        if (!/^\d{4}-\d{2}$/.test(start) || !/^\d{4}-\d{2}$/.test(end) || start > end) return [];
+        const months = [];
+        let current = start;
+        let guard = 0;
+        while (current && current <= end && guard < 10000) {
+          guard += 1;
+          months.push(current);
+          const next = shiftMonthKey(current, 1);
+          if (!next || next === current) break;
+          current = next;
+        }
+        return months;
+      }
+
+      function syncCurrentYearBudgetStateFromMaps(budgetMap, recordMap) {
+        const yearPrefix = String(state.year) + "-";
+        function getMonthFromKey(key) {
+          const parts = String(key || "").split("|");
+          if (parts.length < 2) return "";
+          return String(parts[parts.length - 1] || "");
+        }
+        for (const key of Array.from(state.budgetByCategoryMonth.keys())) {
+          if (getMonthFromKey(key).startsWith(yearPrefix)) state.budgetByCategoryMonth.delete(key);
+        }
+        for (const [key, value] of budgetMap.entries()) {
+          if (getMonthFromKey(key).startsWith(yearPrefix)) state.budgetByCategoryMonth.set(key, Number(value || 0));
+        }
+
+        for (const key of Array.from(state.budgetLineRecordByKey.keys())) {
+          if (getMonthFromKey(key).startsWith(yearPrefix)) state.budgetLineRecordByKey.delete(key);
+        }
+        for (const [key, value] of recordMap.entries()) {
+          if (getMonthFromKey(key).startsWith(yearPrefix)) state.budgetLineRecordByKey.set(key, value);
+        }
+      }
+
+      async function applyAutoBudgetForAllDates() {
+        if (state.loading || !SESSION.token) return;
+        if (state.editing) stopEditing();
+        const allRows = state.incomeRowsAll.concat(state.expenseRowsAll);
+        if (!allRows.length) {
+          setStatus("warn", "No budget categories were found.");
+          return;
+        }
+
+        state.loading = true;
+        setBusy();
+        let changed = 0;
+        let created = 0;
+        let updated = 0;
+        try {
+          const categoriesById = new Map(state.categories.map((c) => [String(c.id), c]));
+          const categoryIdByName = new Map();
+          for (const c of state.categories) {
+            const name = String(c.name || "");
+            if (!name) continue;
+            const existingId = categoryIdByName.get(name);
+            if (!existingId) {
+              categoryIdByName.set(name, String(c.id));
+              continue;
+            }
+            const existingCategory = categoriesById.get(String(existingId));
+            const existingArchived = existingCategory && existingCategory.is_archived === true;
+            const nextArchived = c.is_archived === true;
+            if (existingArchived && !nextArchived) categoryIdByName.set(name, String(c.id));
+          }
+
+          const [budgetLines, activityRows] = await Promise.all([
+            listRecordsSafe("budget_lines", { sort: "month", perPage: 500 }),
+            listRecordsSafe("v_activity_by_category_month", { sort: "month", perPage: 500 })
+          ]);
+
+          const budgetMap = new Map();
+          const recordMap = new Map();
+          const activityMap = new Map();
+          const monthSet = new Set();
+
+          for (const line of budgetLines) {
+            const catId = String(line.category || "");
+            const month = String(line.month || "");
+            if (!catId || !categoriesById.has(catId) || !/^\d{4}-\d{2}$/.test(month)) continue;
+            const amount = parseMinorInt(line.budgeted || 0, "budget_lines.budgeted");
+            const key = catId + "|" + month;
+            budgetMap.set(key, Number(budgetMap.get(key) || 0) + amount);
+            if (!recordMap.has(key)) {
+              recordMap.set(key, { id: String(line.id || ""), budgeted: amount });
+            }
+            monthSet.add(month);
+          }
+
+          for (const row of activityRows) {
+            const categoryName = String(row.category || "");
+            if (!categoryName) continue;
+            const catId = categoryIdByName.get(categoryName);
+            if (!catId || !categoriesById.has(catId)) continue;
+            const month = String(row.month || "");
+            if (!/^\d{4}-\d{2}$/.test(month)) continue;
+            const qty = parseMinorInt(row.activity || 0, "v_activity_by_category_month.activity");
+            const key = catId + "|" + month;
+            activityMap.set(key, Number(activityMap.get(key) || 0) + qty);
+            monthSet.add(month);
+          }
+
+          const monthsSorted = Array.from(monthSet).sort();
+          let monthsToProcess = [];
+          if (monthsSorted.length) {
+            monthsToProcess = monthRangeInclusive(monthsSorted[0], monthsSorted[monthsSorted.length - 1]);
+          } else {
+            for (let m = 1; m <= 12; m += 1) monthsToProcess.push(monthKey(state.year, m));
+          }
+
+          for (const month of monthsToProcess) {
+            for (const row of allRows) {
+              const categoryId = String(row.id);
+              const nextBudgeted = computeAutoBudgetForCategoryWithMaps(categoryId, row.autoBudgetMode, month, budgetMap, activityMap);
+              const key = categoryId + "|" + month;
+              const currentBudgeted = Number(budgetMap.get(key) || 0);
+              if (nextBudgeted === currentBudgeted) continue;
+              const result = await upsertBudgetForCategoryMonthWithMaps(categoryId, month, nextBudgeted, budgetMap, recordMap);
+              changed += 1;
+              if (result === "created") created += 1;
+              else updated += 1;
+            }
+          }
+
+          syncCurrentYearBudgetStateFromMaps(budgetMap, recordMap);
+          buildGridRows();
+          renderTable();
+          if (changed === 0) {
+            setStatus("ok", "Auto budget applied for all dates: no changes were needed.");
+          } else {
+            const firstMonth = monthsToProcess[0] || monthKey(state.year, 1);
+            const lastMonth = monthsToProcess[monthsToProcess.length - 1] || monthKey(state.year, 12);
+            setStatus("ok", "Auto budget applied for all dates (" + firstMonth + " to " + lastMonth + "). Updated: " + updated + ", created: " + created + ".");
+          }
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Auto budget failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      function closeAutoBudgetScopeModal(scope) {
+        const modal = $("#autoBudgetScopeModal");
+        if (!modal) return;
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        if (autoBudgetScopeResolver) {
+          const resolve = autoBudgetScopeResolver;
+          autoBudgetScopeResolver = null;
+          resolve(scope || "");
+        }
+      }
+
+      function chooseAutoBudgetScope() {
+        if (autoBudgetScopeResolver) return Promise.resolve("");
+        const modal = $("#autoBudgetScopeModal");
+        if (!modal) return Promise.resolve("");
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+        $("#btnAutoBudgetScopeYear").focus();
+        return new Promise((resolve) => {
+          autoBudgetScopeResolver = resolve;
+        });
       }
 
       function stopEditing() {
@@ -1331,6 +1673,7 @@
         const year = state.year;
         const janKey = monthKey(year, 1);
         const decKey = monthKey(year, 12);
+        const activityLookbackStartKey = shiftMonthKey(janKey, -11) || janKey;
         const decYmd = year + "-12-31";
 
         const [categories, budgetLines, activityRows, scheduledEntries] = await Promise.all([
@@ -1411,7 +1754,7 @@
           const qty = parseMinorInt(row.activity || 0, "v_activity_by_category_month.activity");
           if (qty !== 0) activityYears.add(Number(month.slice(0, 4)));
           if (month < janKey) openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
-          if (month >= janKey && month <= decKey) {
+          if (month >= activityLookbackStartKey && month <= decKey) {
             const key = catId + "|" + month;
             activityByMonth.set(key, qty);
           }
@@ -1454,7 +1797,8 @@
               const qty = parseMinorInt(entry.qty || 0, "entries.qty");
               if (month < janKey) {
                 openingByCategory.set(catId, Number(openingByCategory.get(catId) || 0) + qty);
-              } else if (month <= decKey) {
+              }
+              if (month >= activityLookbackStartKey && month <= decKey) {
                 const key = catId + "|" + month;
                 activityByMonth.set(key, Number(activityByMonth.get(key) || 0) + qty);
               }
@@ -1603,6 +1947,31 @@
         if (!Number.isInteger(state.year)) return;
         if (state.selectableYears.length && !isSelectableYear(state.year)) return;
         await refreshAll();
+      });
+      $("#btnAutoBudgetYear").addEventListener("click", async () => {
+        if (state.loading) return;
+        const scope = await chooseAutoBudgetScope();
+        if (!scope) return;
+        if (scope === "all") {
+          await applyAutoBudgetForAllDates();
+          return;
+        }
+        await applyAutoBudgetForYear();
+      });
+      $("#btnAutoBudgetScopeYear").addEventListener("click", () => {
+        closeAutoBudgetScopeModal("year");
+      });
+      $("#btnAutoBudgetScopeAll").addEventListener("click", () => {
+        closeAutoBudgetScopeModal("all");
+      });
+      $("#btnAutoBudgetScopeCancel").addEventListener("click", () => {
+        closeAutoBudgetScopeModal("");
+      });
+      $("#autoBudgetScopeModal").addEventListener("click", (ev) => {
+        if (ev.target && ev.target.id === "autoBudgetScopeModal") closeAutoBudgetScopeModal("");
+      });
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && autoBudgetScopeResolver) closeAutoBudgetScopeModal("");
       });
       $("#yearPicker").addEventListener("change", async () => {
         if (state.loading) return;

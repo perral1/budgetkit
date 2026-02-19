@@ -195,6 +195,27 @@
       opacity: 0.55;
       cursor: not-allowed;
     }
+    .entryRowBtn {
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: rgba(23, 35, 53, 0.95);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 0;
+    }
+    .entryRowBtn:hover {
+      border-color: var(--accent);
+    }
+    .entryRowBtn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
     .amountCell {
       display: flex;
       justify-content: flex-end;
@@ -362,6 +383,7 @@
             <div class="line">
               <button class="btn primary" id="btnNewTxn" type="button">New Transaction</button>
               <button class="btn" id="btnRecurrence" type="button" disabled>Recurrence</button>
+              <button class="btn" id="btnEditAddEntry" type="button" style="display:none;">Add Entry</button>
               <button class="btn primary" id="btnEditSave" type="button" style="display:none;">Save Edit</button>
               <button class="btn" id="btnEditCancel" type="button" style="display:none;">Cancel</button>
               <button class="btn" id="btnRefresh">Refresh</button>
@@ -958,6 +980,13 @@
         }
         const btnEditSave = $("#btnEditSave");
         const btnEditCancel = $("#btnEditCancel");
+        const btnEditAddEntry = $("#btnEditAddEntry");
+        const canAddSplitFromTop = editing
+          && state.editDraft
+          && Array.isArray(state.editDraft.entries)
+          && state.editDraft.entries.length <= 1;
+        if (btnEditAddEntry) btnEditAddEntry.style.display = canAddSplitFromTop ? "inline-flex" : "none";
+        if (btnEditAddEntry) btnEditAddEntry.disabled = !canAddSplitFromTop || state.saving || state.loading || state.deleting;
         if (btnEditSave) btnEditSave.style.display = editing ? "inline-flex" : "none";
         if (btnEditCancel) btnEditCancel.style.display = editing ? "inline-flex" : "none";
         if (btnEditSave) btnEditSave.disabled = !editing || state.saving || state.loading || state.deleting;
@@ -2057,6 +2086,66 @@
         return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
       }
 
+      function nextDraftTempEntryId() {
+        return "tmp_entry_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9);
+      }
+
+      function draftEntryFromTemplate(templateEntry, txnDateIso) {
+        const src = templateEntry || {};
+        const fallbackAssetId = String(src.asset || getUsdAssetId() || "");
+        return {
+          id: nextDraftTempEntryId(),
+          txn: String(src.txn || state.editingTxnId || ""),
+          date: txnDateIso || src.date || normalizeDateToNoonUtc(localTodayYmd()),
+          account: src.account || "",
+          category: src.category || null,
+          asset: fallbackAssetId,
+          qty: 0,
+          memo: src.memo || "",
+          status: src.status || "pending",
+          meta: parseTxnMeta(src.meta),
+          _isNew: true
+        };
+      }
+
+      function addEntryToEditDraft(sourceEntryId) {
+        if (!state.editingTxnId || !state.editDraft) return;
+        const entries = Array.isArray(state.editDraft.entries) ? state.editDraft.entries : [];
+        const templateById = sourceEntryId
+          ? entries.find((e) => String((e && e.id) || "") === String(sourceEntryId))
+          : null;
+        const template = templateById || entries[entries.length - 1] || entries[0] || null;
+        const txn = state.editDraft.txn || {};
+        const txnDateIso = txn.date || normalizeDateToNoonUtc(localTodayYmd());
+        const nextEntry = draftEntryFromTemplate(template, txnDateIso);
+        state.editDraft.entries = entries.concat([nextEntry]);
+        renderRegister();
+        setBusy();
+        setStatus("warn", "Added a draft entry. Save Edit to persist it.");
+      }
+
+      function removeEntryFromEditDraft(entryId) {
+        if (!state.editingTxnId || !state.editDraft) return;
+        const entries = Array.isArray(state.editDraft.entries) ? state.editDraft.entries : [];
+        const id = String(entryId || "");
+        if (!id) return;
+        if (entries.length <= 1) {
+          setStatus("warn", "A transaction must keep at least one entry.");
+          return;
+        }
+        const target = entries.find((e) => String((e && e.id) || "") === id);
+        if (!target) return;
+        state.editDraft.entries = entries.filter((e) => String((e && e.id) || "") !== id);
+        if (!target._isNew) {
+          const deleted = Array.isArray(state.editDraft.deletedEntryIds) ? state.editDraft.deletedEntryIds : [];
+          if (!deleted.includes(id)) deleted.push(id);
+          state.editDraft.deletedEntryIds = deleted;
+        }
+        renderRegister();
+        setBusy();
+        setStatus("warn", "Removed draft entry. Save Edit to persist this change.");
+      }
+
       function getUsdAssetId() {
         const usd = state.assets.find((a) => String(a.symbol || "").toUpperCase() === "USD");
         return usd ? usd.id : "";
@@ -2139,7 +2228,7 @@
           state.selectedTxnIds = [txn.id];
           state.selectionAnchorTxnId = txn.id;
           state.editingTxnId = txn.id;
-          state.editDraft = { txn: txn, entries: [entry] };
+          state.editDraft = { txn: txn, entries: [entry], deletedEntryIds: [] };
           state.pendingFocusKey = "txn-date";
           setStatus("warn", "Created new transaction and opened inline edit mode.");
           await loadRegister();
@@ -2185,7 +2274,7 @@
           state.editingTxnId = txnId;
           state.selectedTxnIds = [txnId];
           state.selectionAnchorTxnId = txnId;
-          state.editDraft = { txn: txn, entries: entries };
+          state.editDraft = { txn: txn, entries: entries, deletedEntryIds: [] };
           state.pendingFocusKey = focusKey || "txn-date";
           setStatus("warn", "Inline edit mode: update fields, then Save Edit or Cancel.");
           renderRegister();
@@ -2217,6 +2306,7 @@
         let payee = null;
         let memo = null;
         const updates = [];
+        const creates = [];
         const createdLookupByToken = new Map();
 
         try {
@@ -2256,7 +2346,23 @@
               qty: qty,
               status: status
             };
-            updates.push({ id: entryId, body: body });
+            if (sourceEntry._isNew || entryId.startsWith("tmp_entry_")) {
+              creates.push({
+                body: {
+                  txn: txnId,
+                  date: normalizedDate,
+                  account: body.account,
+                  category: body.category,
+                  asset: body.asset,
+                  qty: body.qty,
+                  memo: sourceEntry.memo || "",
+                  status: body.status,
+                  meta: parseTxnMeta(sourceEntry.meta)
+                }
+              });
+            } else {
+              updates.push({ id: entryId, body: body });
+            }
           }
         } catch (err) {
           setStatus("bad", "Save failed: " + (err && err.message ? err.message : String(err)));
@@ -2273,6 +2379,15 @@
           });
           for (const u of updates) {
             await updateRecord("entries", u.id, u.body);
+          }
+          for (const c of creates) {
+            await createRecord("entries", c.body);
+          }
+          const deletedEntryIds = (state.editDraft && Array.isArray(state.editDraft.deletedEntryIds))
+            ? state.editDraft.deletedEntryIds.slice()
+            : [];
+          for (const entryId of deletedEntryIds) {
+            await deleteRecord("entries", entryId);
           }
           state.editingTxnId = "";
           state.editDraft = null;
@@ -2446,7 +2561,7 @@
               "<td></td>",
               '<td><input class="inlineInput" data-edit="txn-memo" type="text" value="' + escapeHtml(draftTxn.memo || "") + '" /></td>',
               "<td></td>",
-              "<td></td>"
+              '<td><button type="button" class="entryRowBtn" data-edit-add-entry="1" title="Add entry" aria-label="Add entry">+</button></td>'
             ].join("");
             body.appendChild(trTxn);
 
@@ -2456,7 +2571,7 @@
               trE.setAttribute("data-edit-entry", "1");
               trE.setAttribute("data-entry-id", String(e.id || ""));
               trE.innerHTML = [
-                "<td></td>",
+                '<td><button type="button" class="entryRowBtn" data-edit-remove-entry="1" data-entry-id="' + escapeHtml(String(e.id || "")) + '" title="Remove entry" aria-label="Remove entry">-</button></td>',
                 '<td>' + inlineLookupMarkup(editableAccountOptions(e.account), e.account, (a) => accountLabel(a, true), "entry-account", false, "Select account") + "</td>",
                 "<td></td>",
                 '<td>' + inlineLookupMarkup(editableCategoryOptions(e.category), e.category, (c) => categoryLabel(c, true), "entry-category", true, "Optional category") + "</td>",
@@ -2705,6 +2820,9 @@
       $("#btnNewTxn").addEventListener("click", startNewInlineEdit);
       $("#btnRecurrence").addEventListener("click", openRecurrenceModalForSelection);
       $("#btnDeleteTxn").addEventListener("click", deleteSelectedTransaction);
+      $("#btnEditAddEntry").addEventListener("click", function() {
+        addEntryToEditDraft("");
+      });
       $("#btnEditSave").addEventListener("click", saveInlineEdit);
       $("#btnEditCancel").addEventListener("click", cancelInlineEdit);
       $("#btnRecurrenceSave").addEventListener("click", saveRecurrenceFromModal);
@@ -2845,6 +2963,20 @@
       });
 
       $("#registerBody").addEventListener("click", function(e) {
+        const addBtn = e.target ? e.target.closest('button[data-edit-add-entry="1"]') : null;
+        if (addBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          addEntryToEditDraft("");
+          return;
+        }
+        const removeBtn = e.target ? e.target.closest('button[data-edit-remove-entry="1"]') : null;
+        if (removeBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          removeEntryFromEditDraft(removeBtn.getAttribute("data-entry-id") || "");
+          return;
+        }
         const toggleBtn = e.target ? e.target.closest('button[data-status-cycle="1"]') : null;
         if (toggleBtn) {
           e.preventDefault();

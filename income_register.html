@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Income Register</title>
+  <style>
+    :root {
+      --bg: #f3f5f8;
+      --panel: #ffffff;
+      --ink: #1d2b3c;
+      --sub: #53657b;
+      --line: #d9e1ea;
+      --line-strong: #b9c6d7;
+      --ok: #1e8e4d;
+      --warn: #8b6a10;
+      --bad: #b83434;
+      --focus: #2e74c9;
+      --sel: #eaf2ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    .wrap { max-width: 100%; margin: 0 auto; padding: 14px; }
+    .topbar {
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    h1 { margin: 0; font-size: 22px; }
+    .sub { color: var(--sub); margin-top: 4px; font-size: 13px; }
+    .logout { margin-left: 8px; font-size: 12px; }
+    .auth {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: end;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 130px;
+    }
+    label { font-size: 12px; color: var(--sub); }
+    input[type="text"],
+    input[type="password"],
+    input[type="date"],
+    select {
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      padding: 8px;
+      background: #fff;
+      color: var(--ink);
+      min-height: 34px;
+    }
+    input:focus, select:focus, button:focus {
+      outline: 2px solid color-mix(in oklab, var(--focus) 35%, transparent);
+      outline-offset: 1px;
+    }
+    .btn {
+      border: 1px solid var(--line-strong);
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      min-height: 34px;
+    }
+    .btn.primary { background: var(--focus); border-color: var(--focus); color: #fff; }
+    .btn.danger { background: #fff1f1; border-color: #efc7c7; color: #8e1f1f; }
+    .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 8px 10px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+    .status.ok { border-color: #bfe3cb; color: var(--ok); background: #f4fbf7; }
+    .status.warn { border-color: #ebdbb0; color: var(--warn); background: #fffaf0; }
+    .status.bad { border-color: #efc5c5; color: var(--bad); background: #fff4f4; }
+    #app[hidden] { display: none; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .line { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+    .help { font-size: 12px; color: var(--sub); }
+    .registerTableWrap {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: auto;
+      max-height: calc(100vh - 290px);
+      background: #fff;
+    }
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      width: max-content;
+      min-width: 100%;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+      background: #fff;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: #f7fafc;
+      color: var(--sub);
+      font-weight: 600;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    th[data-sort] { cursor: pointer; }
+    th[data-sort].active { color: var(--ink); }
+    td.amountCell { text-align: right; min-width: 110px; }
+    .amt { font-variant-numeric: tabular-nums; min-height: 1em; }
+    .subacct { color: var(--sub); font-size: 11px; margin-top: 3px; min-height: 1em; }
+    tr.selected td { background: var(--sel); }
+    tr.editRow td { background: #f9fcff; }
+    .inputMini {
+      width: 110px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .pager {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .spacer { flex: 1; }
+    .stickyCol { position: sticky; left: 0; z-index: 2; background: inherit; }
+    .stickyCol2 { position: sticky; left: 120px; z-index: 2; background: inherit; }
+    .stickyCol3 { position: sticky; left: 300px; z-index: 2; background: inherit; }
+    th.stickyCol, th.stickyCol2, th.stickyCol3 { z-index: 4; background: #eef3f8; }
+    td.dateCol, th.dateCol { min-width: 120px; max-width: 120px; }
+    td.accountCol, th.accountCol { min-width: 180px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+    td.payeeCol, th.payeeCol { min-width: 180px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+    @media (max-width: 900px) {
+      .auth { justify-content: stretch; }
+      .auth .field { min-width: 100%; }
+      .registerTableWrap { max-height: calc(100vh - 360px); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Income Register <a class="logout" id="logoutLink" href="#">logout</a></h1>
+        <div class="sub">One row per payroll txn, one column per paystub component.</div>
+      </div>
+      <div class="auth" id="authPanel">
+        <div class="field">
+          <label for="pbUrl">URL</label>
+          <input id="pbUrl" type="text" placeholder="http://127.0.0.1:8090" />
+        </div>
+        <div class="field">
+          <label for="pbEmail">Email</label>
+          <input id="pbEmail" type="text" placeholder="you@example.com" />
+        </div>
+        <div class="field">
+          <label for="pbPass">Password</label>
+          <input id="pbPass" type="password" placeholder="password" />
+        </div>
+        <button class="btn primary" id="btnLogin" type="button">Login</button>
+      </div>
+    </div>
+
+    <div class="status" id="statusBox">Not authenticated.</div>
+
+    <div id="app" hidden>
+      <section class="panel">
+        <div class="toolbar">
+          <h2 style="margin:0;">Register</h2>
+          <div class="line">
+            <button class="btn primary" id="btnNewTxn" type="button">New Entry</button>
+            <button class="btn primary" id="btnEditSave" type="button" style="display:none;">Save Edit</button>
+            <button class="btn" id="btnEditCancel" type="button" style="display:none;">Cancel</button>
+            <button class="btn" id="btnRefresh" type="button">Refresh</button>
+            <button class="btn danger" id="btnDeleteTxn" type="button" disabled>Delete selected</button>
+          </div>
+        </div>
+
+        <div class="line" style="margin-bottom:8px;">
+          <div class="field">
+            <label for="fltFrom">From</label>
+            <input id="fltFrom" type="date" />
+          </div>
+          <div class="field">
+            <label for="fltTo">To</label>
+            <input id="fltTo" type="date" />
+          </div>
+          <div class="field">
+            <label for="fltPayee">Payee contains</label>
+            <input id="fltPayee" type="text" placeholder="Search payee name" />
+          </div>
+          <div class="field">
+            <label for="defaultPayrollAccount">Payroll Detail Account</label>
+            <select id="defaultPayrollAccount"></select>
+          </div>
+          <div class="field">
+            <label for="netPayCategory">Net Pay Category</label>
+            <select id="netPayCategory"></select>
+          </div>
+        </div>
+
+        <div class="registerTableWrap">
+          <table id="registerTable">
+            <thead>
+              <tr id="registerHeadRow"></tr>
+            </thead>
+            <tbody id="registerBody"></tbody>
+          </table>
+        </div>
+        <div class="help" id="resultCount" style="margin-top:10px;"></div>
+        <div class="pager">
+          <button class="btn" id="btnPrevPage" type="button">Prev</button>
+          <button class="btn" id="btnNextPage" type="button">Next</button>
+          <span class="mono" id="pageInfo">Page 1 of 1</span>
+          <div class="spacer"></div>
+          <label class="mono" for="perPage">Rows/page</label>
+          <select id="perPage">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const $ = (s, el) => (el || document).querySelector(s);
+      const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+      const store = {
+        get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+        set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+        del(k) { try { localStorage.removeItem(k); } catch {} }
+      };
+
+      const PAYSTUB_DETAIL_COLUMNS = [
+        "Wage", "HI/FSA", "DCAP", "HSA", "Wage Benefits", "Taxable Benefits", "Post-Tax Benefits", "Empl HSA",
+        "Medicare", "Additional Medicare", "SS", "Fed WH", "State WH", "SDI", "Pre-Tax", "Post-Tax", "Match",
+        "Other Savings"
+      ];
+      const NET_PAY_COLUMN = "Net Pay";
+      const PAYSTUB_COLUMNS = PAYSTUB_DETAIL_COLUMNS.concat([NET_PAY_COLUMN]);
+      const TXN_SOURCE_MATCH = "paystub";
+      const KEY_PAYROLL_ACCOUNT = "incomeRegisterPayrollAccountId";
+      const KEY_NET_PAY_CATEGORY = "incomeRegisterNetPayCategoryId";
+      const SESSION = { base: "", token: "" };
+
+      const state = {
+        loading: false,
+        saving: false,
+        deleting: false,
+        txns: [],
+        txnById: new Map(),
+        entriesByTxnId: new Map(),
+        entriesById: new Map(),
+        accounts: [],
+        accountById: new Map(),
+        assets: [],
+        assetPrecisionById: new Map(),
+        categories: [],
+        categoryById: new Map(),
+        categoryByName: new Map(),
+        payees: [],
+        payeeById: new Map(),
+        selectedTxnIds: [],
+        selectionAnchorTxnId: "",
+        visibleTxnOrder: [],
+        editingTxnId: "",
+        editDraft: null,
+        pendingFocusSelector: "",
+        page: 1,
+        perPage: 50,
+        totalPages: 1,
+        totalItems: 0,
+        sort: { column: "date", direction: "desc" },
+        payeeFilterTimer: 0
+      };
+
+      function escapeHtml(raw) {
+        return String(raw == null ? "" : raw)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function setStatus(kind, text) {
+        const el = $("#statusBox");
+        el.classList.remove("ok", "warn", "bad");
+        if (kind) el.classList.add(kind);
+        el.textContent = text;
+      }
+
+      function normalizePrecision(v) {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return 2;
+        const i = Math.trunc(n);
+        if (i < 0 || i > 9) return 2;
+        return i;
+      }
+
+      function parseMinorInt(value, label) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || !Number.isInteger(n)) throw new Error(label + " must be an integer minor-unit value.");
+        return n;
+      }
+
+      function minorToMajor(minor, precision) {
+        return minor / Math.pow(10, precision);
+      }
+
+      function majorToMinor(raw, precision) {
+        const s = String(raw == null ? "" : raw).trim();
+        if (!s) throw new Error("Amount is required.");
+        if (!/^[+-]?(\d+)(\.\d+)?$/.test(s)) throw new Error("Invalid amount: " + s);
+        const sign = s.startsWith("-") ? -1 : 1;
+        const clean = s.replace(/^[+-]/, "");
+        const [iPart, dPartRaw] = clean.split(".");
+        const dPart = dPartRaw || "";
+        if (dPart.length > precision) throw new Error("Amount " + s + " exceeds precision " + precision + ".");
+        const full = iPart + dPart.padEnd(precision, "0");
+        const n = Number(full);
+        if (!Number.isFinite(n)) throw new Error("Invalid amount: " + s);
+        return sign * n;
+      }
+
+      function fmtMajor(value, precision) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return "";
+        return n.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+      }
+
+      function fmtDate(raw) {
+        if (!raw) return "";
+        const s = String(raw);
+        const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : s;
+      }
+
+      function normalizeDateToNoonUtc(ymd) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || ""))) throw new Error("Date must be YYYY-MM-DD.");
+        return ymd + " 12:00:00.000Z";
+      }
+
+      function localTodayYmd() {
+        const now = new Date();
+        return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      }
+
+      function classifyError(err) {
+        if (!err) return { kind: "bad", message: "Unknown error." };
+        if (err.kind === "auth") return { kind: "bad", message: err.message || "Authentication failed." };
+        if (err.kind === "schema") return { kind: "warn", message: err.message || "Schema/query mismatch." };
+        if (err.kind === "network") return { kind: "bad", message: err.message || "Network error." };
+        return { kind: "bad", message: err.message || String(err) };
+      }
+
+      function qs(obj) {
+        return Object.keys(obj)
+          .filter((k) => obj[k] !== "" && obj[k] != null)
+          .map((k) => encodeURIComponent(k) + "=" + encodeURIComponent(String(obj[k])))
+          .join("&");
+      }
+
+      async function pbFetch(path, opts) {
+        const url = SESSION.base + path;
+        let res;
+        try {
+          res = await fetch(url, Object.assign({ headers: {} }, opts || {}));
+        } catch (err) {
+          const e = new Error("Network error (fetch failed): check URL, protocol, and CORS.");
+          e.kind = "network";
+          e.cause = err;
+          throw e;
+        }
+
+        if (res.status === 401 || res.status === 403) {
+          const e = new Error("HTTP " + res.status + " auth failure.");
+          e.kind = "auth";
+          throw e;
+        }
+
+        if (!res.ok) {
+          let detail = "";
+          try {
+            const data = await res.json();
+            detail = data && (data.message || JSON.stringify(data));
+          } catch {
+            try { detail = await res.text(); } catch {}
+          }
+          const e = new Error("HTTP " + res.status + (detail ? ": " + detail : ""));
+          if (res.status === 400) e.kind = "schema";
+          throw e;
+        }
+
+        try { return await res.json(); } catch { return null; }
+      }
+
+      function authHeaders(extra) {
+        const headers = Object.assign({}, extra || {});
+        if (SESSION.token) headers.Authorization = "Bearer " + SESSION.token;
+        return headers;
+      }
+
+      async function listRecordsPageSafe(collection, opts) {
+        const options = Object.assign({ filter: "", sort: "", perPage: 50, page: 1 }, opts || {});
+        async function run(filter, sort) {
+          const query = qs({ page: options.page, perPage: options.perPage, filter: filter || "", sort: sort || "" });
+          return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records?" + query, {
+            method: "GET",
+            headers: authHeaders({ "Content-Type": "application/json" })
+          });
+        }
+
+        try {
+          return await run(options.filter, options.sort);
+        } catch (err1) {
+          if (!(err1 && err1.kind === "schema")) throw err1;
+          setStatus("warn", "Adjusted listing query after HTTP 400 (schema/filter mismatch). Loaded with fewer constraints.");
+          try {
+            return await run(options.filter, "");
+          } catch (err2) {
+            if (!(err2 && err2.kind === "schema")) throw err2;
+            setStatus("warn", "Adjusted listing query again after HTTP 400. Loaded with no filter/sort constraints.");
+            return run("", "");
+          }
+        }
+      }
+
+      async function listRecordsSafe(collection, opts) {
+        const options = Object.assign({ filter: "", sort: "", perPage: 500 }, opts || {});
+        const first = await listRecordsPageSafe(collection, Object.assign({}, options, { page: 1 }));
+        const pages = Math.max(1, Number(first.totalPages || 1));
+        const out = (first.items || []).slice();
+        for (let page = 2; page <= pages; page += 1) {
+          const next = await listRecordsPageSafe(collection, Object.assign({}, options, { page: page }));
+          out.push(...(next.items || []));
+        }
+        return out;
+      }
+
+      async function getRecord(collection, id) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "GET",
+          headers: authHeaders({ "Content-Type": "application/json" })
+        });
+      }
+
+      async function createRecord(collection, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(body || {})
+        });
+      }
+
+      async function updateRecord(collection, id, body) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "PATCH",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(body || {})
+        });
+      }
+
+      async function deleteRecord(collection, id) {
+        return pbFetch("/api/collections/" + encodeURIComponent(collection) + "/records/" + encodeURIComponent(id), {
+          method: "DELETE",
+          headers: authHeaders({ "Content-Type": "application/json" })
+        });
+      }
+
+      async function authWithPassword(email, password) {
+        return pbFetch("/api/collections/users/auth-with-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identity: email, password: password })
+        });
+      }
+
+      async function authRefresh() {
+        return pbFetch("/api/collections/users/auth-refresh", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" })
+        });
+      }
+
+      function setAuthenticatedUI(isAuthed) {
+        $("#app").hidden = !isAuthed;
+        $("#logoutLink").style.display = isAuthed ? "inline" : "none";
+        ["#pbUrl", "#pbEmail", "#pbPass", "#btnLogin"].forEach((sel) => { $(sel).disabled = isAuthed; });
+      }
+
+      function setBusy() {
+        const busy = state.loading || state.saving || state.deleting;
+        $("#btnRefresh").disabled = !SESSION.token || busy;
+        $("#btnNewTxn").disabled = !SESSION.token || busy || !!state.editingTxnId;
+        $("#btnDeleteTxn").disabled = !SESSION.token || busy || state.selectedTxnIds.length < 1 || !!state.editingTxnId;
+        $("#btnEditSave").style.display = state.editingTxnId ? "inline-block" : "none";
+        $("#btnEditCancel").style.display = state.editingTxnId ? "inline-block" : "none";
+        $("#btnEditSave").disabled = !state.editingTxnId || busy;
+        $("#btnEditCancel").disabled = !state.editingTxnId || busy;
+        ["#fltFrom", "#fltTo", "#fltPayee", "#defaultPayrollAccount", "#netPayCategory", "#perPage", "#btnPrevPage", "#btnNextPage"].forEach((sel) => {
+          const el = $(sel);
+          if (!el) return;
+          if (sel === "#btnPrevPage") el.disabled = busy || state.page <= 1 || !SESSION.token;
+          else if (sel === "#btnNextPage") el.disabled = busy || state.page >= state.totalPages || !SESSION.token;
+          else el.disabled = !SESSION.token || busy;
+        });
+      }
+
+      function updatePageInfo() {
+        const current = Math.max(1, state.page || 1);
+        const totalPages = Math.max(1, state.totalPages || 1);
+        const totalItems = Math.max(0, state.totalItems || 0);
+        $("#pageInfo").textContent = "Page " + current + " of " + totalPages + " (" + totalItems + " rows)";
+      }
+
+      function accountLabel(account) {
+        if (!account) return "";
+        const base = account.name || account.id || "";
+        const type = account.type ? " (" + account.type + ")" : "";
+        const archived = account.is_archived ? " [archived]" : "";
+        return base + type + archived;
+      }
+
+      function payeeLabel(payee) {
+        if (!payee) return "";
+        const base = payee.name || payee.id || "";
+        return base + (payee.is_archived ? " [archived]" : "");
+      }
+
+      function getUsdAssetId() {
+        const usd = state.assets.find((a) => String(a && a.symbol || "").toUpperCase() === "USD");
+        return usd ? String(usd.id || "") : "";
+      }
+
+      function getAccountById(id) {
+        return state.accountById.get(String(id || "")) || null;
+      }
+
+      function getCategoryById(id) {
+        return state.categoryById.get(String(id || "")) || null;
+      }
+
+      function getPayeeById(id) {
+        return state.payeeById.get(String(id || "")) || null;
+      }
+
+      function payeeDisplayName(id) {
+        const p = getPayeeById(id);
+        return (p && (p.name || p.id)) || "";
+      }
+
+      function assetPrecision(assetId) {
+        return state.assetPrecisionById.get(String(assetId || "")) ?? 2;
+      }
+
+      function toKey(s) {
+        return String(s == null ? "" : s).trim().toLowerCase();
+      }
+
+      function serverSortExpr() {
+        const col = state.sort.column;
+        const dir = state.sort.direction === "asc" ? "" : "-";
+        if (col === "payee") return dir + "payee";
+        return dir + "date";
+      }
+
+      function buildTxnFilter() {
+        const out = [];
+        out.push('source ~ "' + TXN_SOURCE_MATCH.replaceAll('"', '\\"') + '"');
+        const from = $("#fltFrom").value;
+        const to = $("#fltTo").value;
+        const payeeRaw = String($("#fltPayee").value || "").trim().toLowerCase();
+        if (from) out.push('date >= "' + normalizeDateToNoonUtc(from) + '"');
+        if (to) out.push('date <= "' + normalizeDateToNoonUtc(to) + '"');
+
+        if (payeeRaw) {
+          const ids = state.payees
+            .filter((p) => String((p && p.name) || "").toLowerCase().includes(payeeRaw))
+            .map((p) => String((p && p.id) || ""))
+            .filter(Boolean);
+          if (!ids.length) {
+            out.push('payee = "__no_payee_name_match__"');
+          } else {
+            out.push("(" + ids.map((id) => 'payee = "' + id.replaceAll('"', '\\"') + '"').join(" || ") + ")");
+          }
+        }
+        return out.join(" && ");
+      }
+
+      async function ensureAccountsLoaded(ids) {
+        const missing = Array.from(new Set((ids || []).map((v) => String(v || "")).filter((id) => id && !state.accountById.has(id))));
+        for (const id of missing) {
+          try {
+            const row = await getRecord("accounts", id);
+            if (row && row.id) {
+              state.accountById.set(String(row.id), row);
+              state.accounts.push(row);
+            }
+          } catch {}
+        }
+      }
+
+      async function ensureCategoriesLoaded(ids) {
+        const missing = Array.from(new Set((ids || []).map((v) => String(v || "")).filter((id) => id && !state.categoryById.has(id))));
+        for (const id of missing) {
+          try {
+            const row = await getRecord("categories", id);
+            if (row && row.id) {
+              state.categoryById.set(String(row.id), row);
+              state.categories.push(row);
+              if (row.name) {
+                const key = toKey(row.name);
+                if (!state.categoryByName.has(key)) state.categoryByName.set(key, row);
+              }
+            }
+          } catch {}
+        }
+      }
+
+      async function ensurePayeesLoaded(ids) {
+        const missing = Array.from(new Set((ids || []).map((v) => String(v || "")).filter((id) => id && !state.payeeById.has(id))));
+        for (const id of missing) {
+          try {
+            const row = await getRecord("payees", id);
+            if (row && row.id) {
+              state.payeeById.set(String(row.id), row);
+              state.payees.push(row);
+            }
+          } catch {}
+        }
+      }
+
+      async function loadReferenceData() {
+        const [accounts, assets, categories, payees] = await Promise.all([
+          listRecordsSafe("accounts", { filter: "is_archived = false", sort: "name", perPage: 500 }),
+          listRecordsSafe("assets", { sort: "symbol", perPage: 500 }),
+          listRecordsSafe("categories", { sort: "name", perPage: 500 }),
+          listRecordsSafe("payees", { filter: "is_archived = false", sort: "name", perPage: 500 })
+        ]);
+
+        state.accounts = accounts.slice();
+        state.accountById = new Map(state.accounts.map((a) => [String(a.id), a]));
+        state.assets = assets.slice();
+        state.assetPrecisionById = new Map(state.assets.map((a) => [String(a.id), normalizePrecision(a.precision)]));
+        state.categories = categories.slice();
+        state.categoryById = new Map(state.categories.map((c) => [String(c.id), c]));
+        state.categoryByName = new Map();
+        state.categories.forEach((c) => {
+          const key = toKey(c && c.name);
+          if (!key) return;
+          if (!state.categoryByName.has(key)) state.categoryByName.set(key, c);
+        });
+        await ensurePaystubCategories();
+        state.payees = payees.slice();
+        state.payeeById = new Map(state.payees.map((p) => [String(p.id), p]));
+
+        refillDefaultAccountSelectors();
+        refillNetPayCategorySelector();
+      }
+
+      function refillDefaultAccountSelectors() {
+        const payrollSel = $("#defaultPayrollAccount");
+        const payrollCandidates = state.accounts.filter((a) => String((a && a.type) || "") === "virtual");
+
+        const payrollOptions = (payrollCandidates.length ? payrollCandidates : state.accounts)
+          .slice()
+          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }));
+
+        payrollSel.innerHTML = payrollOptions.map((a) => '<option value="' + escapeHtml(a.id) + '">' + escapeHtml(accountLabel(a)) + "</option>").join("");
+
+        const savedPayroll = store.get(KEY_PAYROLL_ACCOUNT, "");
+
+        const payrollId = payrollOptions.some((a) => a.id === savedPayroll) ? savedPayroll : (payrollOptions[0] ? payrollOptions[0].id : "");
+
+        payrollSel.value = payrollId || "";
+        if (payrollId) store.set(KEY_PAYROLL_ACCOUNT, payrollId);
+      }
+
+      function refillNetPayCategorySelector() {
+        const sel = $("#netPayCategory");
+        const incomeCats = state.categories
+          .filter((c) => String((c && c.kind) || "") === "income" && !c.is_archived)
+          .slice()
+          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }));
+        sel.innerHTML = incomeCats.map((c) => '<option value="' + escapeHtml(c.id) + '">' + escapeHtml((c.name || c.id || "")) + "</option>").join("");
+
+        const saved = store.get(KEY_NET_PAY_CATEGORY, "");
+        const selected = incomeCats.some((c) => c.id === saved) ? saved : (incomeCats[0] ? incomeCats[0].id : "");
+        sel.value = selected || "";
+        if (selected) store.set(KEY_NET_PAY_CATEGORY, selected);
+      }
+
+      function activePayrollAccountId() {
+        return String($("#defaultPayrollAccount").value || "");
+      }
+
+      function activeNetPayCategoryId() {
+        return String($("#netPayCategory").value || "");
+      }
+
+      function defaultNetPayAccountId() {
+        const nonVirtual = state.accounts
+          .filter((a) => String((a && a.type) || "") !== "virtual" && !a.is_archived)
+          .slice()
+          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }));
+        if (nonVirtual[0] && nonVirtual[0].id) return String(nonVirtual[0].id);
+        const any = state.accounts.find((a) => a && a.id);
+        return any ? String(any.id) : "";
+      }
+
+      async function ensurePaystubCategories() {
+        const missingNames = [];
+        const nonPayroll = [];
+
+        for (const col of PAYSTUB_DETAIL_COLUMNS) {
+          const existing = state.categoryByName.get(toKey(col));
+          if (!existing) {
+            missingNames.push(col);
+            continue;
+          }
+          if (String(existing.kind || "") !== "payroll") {
+            nonPayroll.push(existing);
+          }
+        }
+
+        for (const name of missingNames) {
+          try {
+            const created = await createRecord("categories", {
+              name: name,
+              kind: "payroll",
+              is_archived: false
+            });
+            if (created && created.id) {
+              state.categories.push(created);
+              state.categoryById.set(String(created.id), created);
+              state.categoryByName.set(toKey(name), created);
+            }
+          } catch (err) {
+            const detail = err && err.message ? err.message : String(err);
+            throw new Error("Failed creating category \"" + name + "\" with kind=payroll. Ensure categories.kind allows \"payroll\". " + detail);
+          }
+        }
+
+        for (const row of nonPayroll) {
+          try {
+            const updated = await updateRecord("categories", row.id, { kind: "payroll" });
+            const finalRow = updated && updated.id ? updated : Object.assign({}, row, { kind: "payroll" });
+            state.categoryById.set(String(finalRow.id), finalRow);
+            state.categoryByName.set(toKey(finalRow.name), finalRow);
+            const idx = state.categories.findIndex((c) => String((c && c.id) || "") === String(finalRow.id));
+            if (idx >= 0) state.categories[idx] = finalRow;
+          } catch (err) {
+            const detail = err && err.message ? err.message : String(err);
+            throw new Error("Failed updating category \"" + (row.name || row.id) + "\" to kind=payroll. Ensure categories.kind allows \"payroll\". " + detail);
+          }
+        }
+      }
+
+      function validateColumnCategories() {
+        const missing = PAYSTUB_DETAIL_COLUMNS.filter((name) => !state.categoryByName.get(toKey(name)));
+        if (missing.length) throw new Error("Missing categories required by paystub columns: " + missing.join(", ") + ".");
+        if (!activeNetPayCategoryId()) throw new Error("Select a Net Pay Category (income) before loading.");
+      }
+
+      function netPayEntryFromModel(model) {
+        if (!model || !Array.isArray(model.entries)) return null;
+        const netCatId = activeNetPayCategoryId();
+        if (!netCatId) return null;
+        return model.entries.find((e) => String((e && e.category) || "") === netCatId) || null;
+      }
+
+      function netPayAccountLabelFromModel(model) {
+        const entry = netPayEntryFromModel(model);
+        const account = entry ? getAccountById(entry.account) : null;
+        return accountLabel(account);
+      }
+
+      async function loadEntriesForTxnIds(txnIds) {
+        state.entriesByTxnId = new Map();
+        state.entriesById = new Map();
+        if (!txnIds.length) return;
+
+        const escaped = txnIds.map((id) => 'txn = "' + id.replaceAll('"', '\\"') + '"');
+        const chunkSize = 20;
+        for (let i = 0; i < escaped.length; i += chunkSize) {
+          const chunkFilter = escaped.slice(i, i + chunkSize).join(" || ");
+          const rows = await listRecordsSafe("entries", { filter: "(" + chunkFilter + ")", sort: "date", perPage: 500 });
+          await ensureAccountsLoaded(rows.map((r) => r && r.account));
+          await ensureCategoriesLoaded(rows.map((r) => r && r.category));
+          rows.forEach((row) => {
+            const txnId = String((row && row.txn) || "");
+            if (!txnId) return;
+            if (!state.entriesByTxnId.has(txnId)) state.entriesByTxnId.set(txnId, []);
+            state.entriesByTxnId.get(txnId).push(row);
+            if (row && row.id) state.entriesById.set(String(row.id), row);
+          });
+        }
+      }
+
+      function qtyDisplayForEntry(entry) {
+        if (!entry) return "";
+        try {
+          const minor = parseMinorInt(entry.qty, "entries.qty");
+          if (minor === 0) return "";
+          const p = assetPrecision(entry.asset);
+          return fmtMajor(minorToMajor(minor, p), p);
+        } catch {
+          return "";
+        }
+      }
+
+      function buildTxnModel(txn) {
+        const txnId = String((txn && txn.id) || "");
+        const list = (state.entriesByTxnId.get(txnId) || []).slice();
+        const byColumn = new Map();
+        const duplicateColumns = [];
+
+        for (const e of list) {
+          const cat = getCategoryById(e && e.category);
+          const catName = String((cat && cat.name) || "");
+          const key = toKey(catName);
+          if (!key) continue;
+          if (!PAYSTUB_DETAIL_COLUMNS.some((c) => toKey(c) === key)) continue;
+          if (!byColumn.has(key)) byColumn.set(key, e);
+          else duplicateColumns.push(catName || key);
+        }
+        const netPayCategoryId = activeNetPayCategoryId();
+        if (netPayCategoryId) {
+          const netPayCount = list.filter((e) => String((e && e.category) || "") === netPayCategoryId).length;
+          if (netPayCount > 1) duplicateColumns.push(NET_PAY_COLUMN);
+        }
+
+        return { txn: txn, entries: list, byColumn: byColumn, duplicateColumns: duplicateColumns };
+      }
+
+      async function loadRegister() {
+        validateColumnCategories();
+
+        const allTxns = await listRecordsSafe("txns", {
+          filter: buildTxnFilter(),
+          sort: serverSortExpr(),
+          perPage: 500
+        });
+
+        await ensurePayeesLoaded(allTxns.map((t) => t && t.payee));
+        await loadEntriesForTxnIds(allTxns.map((t) => String((t && t.id) || "")).filter(Boolean));
+
+        const netPayCatId = activeNetPayCategoryId();
+        const filteredTxns = allTxns.filter((txn) => {
+          const txnId = String((txn && txn.id) || "");
+          const rows = state.entriesByTxnId.get(txnId) || [];
+          return rows.some((e) => String((e && e.category) || "") === netPayCatId);
+        });
+
+        state.totalItems = filteredTxns.length;
+        state.totalPages = Math.max(1, Math.ceil(filteredTxns.length / state.perPage));
+        if (state.page > state.totalPages) state.page = state.totalPages;
+        const start = (state.page - 1) * state.perPage;
+        const end = start + state.perPage;
+        state.txns = filteredTxns.slice(start, end);
+        state.txnById = new Map(state.txns.map((t) => [String(t.id), t]));
+
+        updatePageInfo();
+        renderRegister();
+      }
+
+      function compareValues(a, b, direction) {
+        const dir = direction === "asc" ? 1 : -1;
+        const sa = String(a == null ? "" : a);
+        const sb = String(b == null ? "" : b);
+        return sa.localeCompare(sb, undefined, { sensitivity: "base", numeric: true }) * dir;
+      }
+
+      function sortClientRows(models) {
+        const col = state.sort.column;
+        const direction = state.sort.direction;
+        const copy = models.slice();
+        copy.sort((a, b) => {
+          if (col === "account") return compareValues(netPayAccountLabelFromModel(a), netPayAccountLabelFromModel(b), direction);
+          if (col === "payee") return compareValues(payeeDisplayName(a.txn.payee), payeeDisplayName(b.txn.payee), direction);
+          return compareValues(fmtDate(a.txn.date || ""), fmtDate(b.txn.date || ""), direction);
+        });
+        return copy;
+      }
+
+      function headerArrow(column) {
+        if (state.sort.column !== column) return "";
+        return state.sort.direction === "asc" ? " \u2191" : " \u2193";
+      }
+
+      function renderHead() {
+        const tr = $("#registerHeadRow");
+        const base = [
+          '<th class="stickyCol dateCol" data-sort="date">Date' + headerArrow("date") + "</th>",
+          '<th class="stickyCol2 accountCol" data-sort="account">Account' + headerArrow("account") + "</th>",
+          '<th class="stickyCol3 payeeCol" data-sort="payee">Payee' + headerArrow("payee") + "</th>"
+        ];
+        const cols = PAYSTUB_COLUMNS.map((name) => '<th>' + escapeHtml(name) + "</th>");
+        tr.innerHTML = base.join("") + cols.join("");
+      }
+
+      function renderReadRow(model, isSelected) {
+        const txn = model.txn;
+        const tr = document.createElement("tr");
+        if (isSelected) tr.classList.add("selected");
+
+        const tds = [];
+        tds.push('<td class="stickyCol dateCol">' + escapeHtml(fmtDate(txn.date)) + "</td>");
+        tds.push('<td class="stickyCol2 accountCol">' + escapeHtml(netPayAccountLabelFromModel(model)) + "</td>");
+        tds.push('<td class="stickyCol3 payeeCol">' + escapeHtml(payeeDisplayName(txn.payee)) + "</td>");
+
+        for (const col of PAYSTUB_COLUMNS) {
+          const e = col === NET_PAY_COLUMN
+            ? netPayEntryFromModel(model)
+            : (model.byColumn.get(toKey(col)) || null);
+          const qty = qtyDisplayForEntry(e);
+          const acc = e ? accountLabel(getAccountById(e.account)) : "";
+          tds.push('<td class="amountCell"><div class="amt">' + escapeHtml(qty) + '</div><div class="subacct">' + escapeHtml(acc) + "</div></td>");
+        }
+
+        tr.innerHTML = tds.join("");
+        tr.addEventListener("click", function(ev) { selectTxn(String(txn.id || ""), ev); });
+        tr.addEventListener("dblclick", function() { startInlineEdit(String(txn.id || "")); });
+        return tr;
+      }
+
+      function renderEditRow() {
+        const draft = state.editDraft;
+        const tr = document.createElement("tr");
+        tr.className = "editRow";
+        tr.setAttribute("data-edit-root", "1");
+
+        const tds = [];
+        tds.push('<td class="stickyCol dateCol"><input data-edit="txn-date" type="text" inputmode="numeric" placeholder="YYYY-MM-DD" value="' + escapeHtml(draft.dateYmd || "") + '" /></td>');
+        const accountOptions = ['<option value="">(none)</option>'].concat(
+          state.accounts
+            .slice()
+            .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }))
+            .map((a) => {
+              const selected = String(a.id || "") === String(draft.netPayAccountId || "") ? " selected" : "";
+              return '<option value="' + escapeHtml(a.id) + '"' + selected + '>' + escapeHtml(accountLabel(a)) + '</option>';
+            })
+        );
+        tds.push('<td class="stickyCol2 accountCol"><select data-edit="txn-account">' + accountOptions.join("") + "</select></td>");
+
+        const payeeOptions = ['<option value="">(none)</option>'].concat(
+          state.payees
+            .slice()
+            .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" }))
+            .map((p) => {
+              const selected = String(p.id || "") === String(draft.payeeId || "") ? " selected" : "";
+              return '<option value="' + escapeHtml(p.id) + '"' + selected + '>' + escapeHtml(payeeLabel(p)) + '</option>';
+            })
+        );
+        tds.push('<td class="stickyCol3 payeeCol"><select data-edit="txn-payee">' + payeeOptions.join("") + "</select></td>");
+
+        for (const col of PAYSTUB_COLUMNS) {
+          const v = draft.values[col] == null ? "" : String(draft.values[col]);
+          const defaultAcc = col === NET_PAY_COLUMN
+            ? accountLabel(getAccountById(draft.netPayAccountId))
+            : accountLabel(getAccountById(activePayrollAccountId()));
+          tds.push(
+            '<td class="amountCell">' +
+              '<input class="inputMini" data-edit-col="' + escapeHtml(col) + '" type="text" value="' + escapeHtml(v) + '" placeholder="" />' +
+              '<div class="subacct">' + escapeHtml(defaultAcc) + "</div>" +
+            "</td>"
+          );
+        }
+
+        tr.innerHTML = tds.join("");
+        return tr;
+      }
+
+      function applyPendingFocus() {
+        if (!state.pendingFocusSelector) return;
+        const sel = state.pendingFocusSelector;
+        requestAnimationFrame(function() {
+          const el = $(sel, $("#registerBody"));
+          if (!el) return;
+          try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+          if (el.tagName === "INPUT") {
+            try { el.select(); } catch {}
+          }
+          state.pendingFocusSelector = "";
+        });
+      }
+
+      function renderRegister() {
+        renderHead();
+        const body = $("#registerBody");
+        body.innerHTML = "";
+
+        const models = sortClientRows(state.txns.map((txn) => buildTxnModel(txn)));
+        state.visibleTxnOrder = models.map((m) => String((m.txn && m.txn.id) || "")).filter(Boolean);
+
+        const visibleSet = new Set(state.visibleTxnOrder);
+        state.selectedTxnIds = state.selectedTxnIds.filter((id) => visibleSet.has(id));
+        if (state.selectionAnchorTxnId && !visibleSet.has(state.selectionAnchorTxnId)) state.selectionAnchorTxnId = state.selectedTxnIds[0] || "";
+
+        const selectedSet = new Set(state.selectedTxnIds);
+
+        models.forEach((model) => {
+          const txnId = String((model.txn && model.txn.id) || "");
+          if (!txnId) return;
+          if (state.editingTxnId && state.editingTxnId === txnId && state.editDraft) {
+            body.appendChild(renderEditRow());
+            return;
+          }
+          body.appendChild(renderReadRow(model, selectedSet.has(txnId)));
+        });
+
+        let dupCount = 0;
+        models.forEach((m) => { if (m.duplicateColumns.length) dupCount += 1; });
+        if (dupCount) {
+          setStatus("warn", "Loaded with duplicate paystub category entries in " + dupCount + " transaction(s). Save is blocked until duplicates are resolved.");
+        }
+
+        $("#resultCount").textContent = state.txns.length + " transactions shown. Double-click a row to edit.";
+        applyPendingFocus();
+        setBusy();
+      }
+
+      function selectTxn(txnId, ev) {
+        if (!txnId || state.editingTxnId) return;
+
+        const order = state.visibleTxnOrder.slice();
+        const selected = new Set(state.selectedTxnIds);
+        const isToggle = !!(ev && (ev.metaKey || ev.ctrlKey));
+        const isRange = !!(ev && ev.shiftKey);
+
+        if (isRange && state.selectionAnchorTxnId) {
+          const a = order.indexOf(state.selectionAnchorTxnId);
+          const b = order.indexOf(txnId);
+          if (a !== -1 && b !== -1) {
+            const start = Math.min(a, b);
+            const end = Math.max(a, b);
+            if (!isToggle) selected.clear();
+            order.slice(start, end + 1).forEach((id) => selected.add(id));
+          } else {
+            if (!isToggle) selected.clear();
+            selected.add(txnId);
+          }
+        } else if (isToggle) {
+          if (selected.has(txnId)) selected.delete(txnId);
+          else selected.add(txnId);
+          state.selectionAnchorTxnId = txnId;
+        } else {
+          selected.clear();
+          selected.add(txnId);
+          state.selectionAnchorTxnId = txnId;
+        }
+
+        if (!state.selectionAnchorTxnId) state.selectionAnchorTxnId = txnId;
+        state.selectedTxnIds = Array.from(selected);
+        renderRegister();
+      }
+
+      function buildEditDraftFromModel(model) {
+        const txn = model.txn;
+        const netPayEntry = netPayEntryFromModel(model);
+        const values = {};
+        for (const col of PAYSTUB_COLUMNS) {
+          const entry = col === NET_PAY_COLUMN
+            ? netPayEntry
+            : (model.byColumn.get(toKey(col)) || null);
+          if (!entry) {
+            values[col] = "";
+            continue;
+          }
+          try {
+            const p = assetPrecision(entry.asset);
+            const minor = parseMinorInt(entry.qty, "entries.qty");
+            values[col] = minor === 0 ? "" : fmtMajor(minorToMajor(minor, p), p);
+          } catch {
+            values[col] = "";
+          }
+        }
+
+        return {
+          txnId: String(txn.id || ""),
+          dateYmd: fmtDate(txn.date || ""),
+          netPayAccountId: String((netPayEntry && netPayEntry.account) || ""),
+          payeeId: String(txn.payee || ""),
+          values: values,
+          sourceEntriesByColumn: new Map(PAYSTUB_COLUMNS.map((col) => [
+            col,
+            col === NET_PAY_COLUMN ? netPayEntry : (model.byColumn.get(toKey(col)) || null)
+          ])),
+          hasDuplicates: model.duplicateColumns.length > 0
+        };
+      }
+
+      async function startInlineEdit(txnId) {
+        if (!SESSION.token || !txnId) return;
+        if (state.loading || state.saving || state.deleting) return;
+        if (state.editingTxnId && state.editingTxnId !== txnId) {
+          const ok = await saveInlineEdit();
+          if (!ok) return;
+        }
+        if (state.editingTxnId === txnId) return;
+
+        const txn = state.txnById.get(txnId);
+        if (!txn) return;
+        const model = buildTxnModel(txn);
+        const draft = buildEditDraftFromModel(model);
+        state.editingTxnId = txnId;
+        state.editDraft = draft;
+        state.selectedTxnIds = [txnId];
+        state.selectionAnchorTxnId = txnId;
+        state.pendingFocusSelector = 'input[data-edit="txn-date"]';
+        setStatus("warn", "Inline edit mode: update values then Save Edit or Cancel.");
+        renderRegister();
+      }
+
+      function cancelInlineEdit() {
+        state.editingTxnId = "";
+        state.editDraft = null;
+        state.pendingFocusSelector = "";
+        setStatus("ok", "Edit canceled.");
+        renderRegister();
+      }
+
+      function readInlineDraftFromDom() {
+        const root = $('tr[data-edit-root="1"]', $("#registerBody"));
+        if (!root) throw new Error("Edit row missing.");
+        const dateYmd = String($('input[data-edit="txn-date"]', root).value || "").trim();
+        const netPayAccountId = String($('select[data-edit="txn-account"]', root).value || "").trim();
+        const payeeId = String($('select[data-edit="txn-payee"]', root).value || "").trim();
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateYmd)) throw new Error("Date must be in YYYY-MM-DD format.");
+
+        const values = {};
+        PAYSTUB_COLUMNS.forEach((col) => {
+          const raw = $('input[data-edit-col="' + cssEscape(col) + '"]', root).value;
+          values[col] = String(raw == null ? "" : raw).trim();
+        });
+
+        return { dateYmd: dateYmd, netPayAccountId: netPayAccountId, payeeId: payeeId, values: values };
+      }
+
+      function cssEscape(s) {
+        return String(s).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+      }
+
+      async function saveInlineEdit() {
+        if (!SESSION.token || !state.editingTxnId || !state.editDraft) return false;
+        if (state.saving) return false;
+        if (state.editDraft.hasDuplicates) {
+          setStatus("bad", "Save blocked: transaction has duplicate entries for one or more paystub categories.");
+          return false;
+        }
+
+        let form;
+        try {
+          form = readInlineDraftFromDom();
+        } catch (err) {
+          setStatus("bad", "Save failed: " + (err && err.message ? err.message : String(err)));
+          return false;
+        }
+
+        const txnId = state.editingTxnId;
+        const normalizedDate = normalizeDateToNoonUtc(form.dateYmd);
+        const usdAssetId = getUsdAssetId();
+        if (!usdAssetId) {
+          setStatus("bad", "Save failed: USD asset not found.");
+          return false;
+        }
+
+        const payrollAccountId = activePayrollAccountId();
+        if (!payrollAccountId) {
+          setStatus("bad", "Save failed: Payroll Detail Account is required.");
+          return false;
+        }
+
+        const updates = [];
+        const creates = [];
+        const deletes = [];
+
+        try {
+          for (const col of PAYSTUB_COLUMNS) {
+            const raw = String(form.values[col] || "").trim();
+            const existing = state.editDraft.sourceEntriesByColumn.get(col) || null;
+            const categoryId = col === NET_PAY_COLUMN
+              ? activeNetPayCategoryId()
+              : String(((state.categoryByName.get(toKey(col)) || {}).id) || "");
+            if (!categoryId) throw new Error("Missing category mapping for column " + col + ".");
+
+            if (!raw) {
+              if (existing && existing.id) deletes.push(String(existing.id));
+              continue;
+            }
+
+            const precision = assetPrecision(existing && existing.asset ? existing.asset : usdAssetId);
+            const qtyMinor = majorToMinor(raw, precision);
+            const accountId = col === NET_PAY_COLUMN
+              ? String(form.netPayAccountId || (existing && existing.account) || "").trim()
+              : payrollAccountId;
+            if (!accountId) throw new Error("Net Pay account is required when Net Pay has a value.");
+
+            const body = {
+              txn: txnId,
+              date: normalizedDate,
+              account: accountId,
+              category: categoryId,
+              asset: usdAssetId,
+              qty: qtyMinor,
+              status: "pending"
+            };
+
+            if (existing && existing.id) updates.push({ id: String(existing.id), body: body });
+            else creates.push(body);
+          }
+        } catch (err) {
+          setStatus("bad", "Save failed: " + (err && err.message ? err.message : String(err)));
+          return false;
+        }
+
+        try {
+          state.saving = true;
+          setBusy();
+
+          await updateRecord("txns", txnId, {
+            date: normalizedDate,
+            payee: form.payeeId || null
+          });
+
+          for (const u of updates) await updateRecord("entries", u.id, u.body);
+          for (const c of creates) await createRecord("entries", c);
+          for (const id of deletes) await deleteRecord("entries", id);
+
+          state.editingTxnId = "";
+          state.editDraft = null;
+          state.pendingFocusSelector = "";
+          setStatus("ok", "Transaction " + txnId + " updated.");
+          await refreshAll();
+          return true;
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Save edit failed: " + (err && err.message ? err.message : info.message));
+          return false;
+        } finally {
+          state.saving = false;
+          setBusy();
+        }
+      }
+
+      async function startNewInlineEdit() {
+        if (!SESSION.token || state.loading || state.saving || state.deleting) return;
+        if (state.editingTxnId) {
+          setStatus("warn", "Finish or cancel the current edit before creating a new entry.");
+          return;
+        }
+
+        let createdTxnId = "";
+        let createdEntryId = "";
+        try {
+          state.loading = true;
+          setBusy();
+
+          validateColumnCategories();
+          const netPayCategoryId = activeNetPayCategoryId();
+          if (!netPayCategoryId) throw new Error("Net Pay Category (income) is required.");
+          const netPayAccountId = defaultNetPayAccountId();
+          if (!netPayAccountId) throw new Error("At least one account is required to create a Net Pay entry.");
+          const usdAssetId = getUsdAssetId();
+          if (!usdAssetId) throw new Error("USD asset not found.");
+          const txnDate = normalizeDateToNoonUtc(localTodayYmd());
+
+          const txn = await createRecord("txns", {
+            date: txnDate,
+            source: "manual:paystub"
+          });
+          createdTxnId = String(txn && txn.id || "");
+          if (!createdTxnId) throw new Error("No txn id returned by PocketBase.");
+          const netPayEntry = await createRecord("entries", {
+            txn: createdTxnId,
+            date: txnDate,
+            account: netPayAccountId,
+            category: netPayCategoryId,
+            asset: usdAssetId,
+            qty: 0,
+            status: "pending"
+          });
+          createdEntryId = String((netPayEntry && netPayEntry.id) || "");
+
+          state.page = 1;
+          await refreshAll();
+          await startInlineEdit(createdTxnId);
+          setStatus("warn", "Created new paystub transaction and opened inline edit mode.");
+        } catch (err) {
+          if (createdEntryId) {
+            try { await deleteRecord("entries", createdEntryId); } catch {}
+          }
+          if (createdTxnId) {
+            try { await deleteRecord("txns", createdTxnId); } catch {}
+          }
+          const info = classifyError(err);
+          setStatus(info.kind, "New entry failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      async function deleteSelectedTransactions() {
+        if (!SESSION.token || state.selectedTxnIds.length < 1 || state.deleting || state.editingTxnId) return;
+        const ids = state.selectedTxnIds.slice();
+        const yes = confirm("Delete " + ids.length + " selected transaction(s) and their entries? This cannot be undone.");
+        if (!yes) return;
+
+        state.deleting = true;
+        setBusy();
+
+        let deletedTxns = 0;
+        let deletedEntries = 0;
+        const failed = [];
+
+        try {
+          for (const txnId of ids) {
+            try {
+              const rows = await listRecordsSafe("entries", {
+                filter: 'txn = "' + txnId.replaceAll('"', '\\"') + '"',
+                sort: "date",
+                perPage: 500
+              });
+              for (const row of rows) {
+                await deleteRecord("entries", row.id);
+                deletedEntries += 1;
+              }
+              await deleteRecord("txns", txnId);
+              deletedTxns += 1;
+            } catch {
+              failed.push(txnId);
+            }
+          }
+
+          state.selectedTxnIds = failed.slice();
+          state.selectionAnchorTxnId = state.selectedTxnIds[0] || "";
+          if (failed.length) setStatus("warn", "Deleted " + deletedTxns + " txn(s), " + deletedEntries + " entries. Failed: " + failed.join(", "));
+          else setStatus("ok", "Deleted " + deletedTxns + " txn(s) and " + deletedEntries + " related entries.");
+          await refreshAll();
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Delete failed: " + (err && err.message ? err.message : info.message));
+        } finally {
+          state.deleting = false;
+          setBusy();
+        }
+      }
+
+      async function refreshAll() {
+        if (!SESSION.token) return;
+        state.loading = true;
+        setBusy();
+
+        try {
+          await loadReferenceData();
+          await loadRegister();
+          setStatus("ok", "Loaded reference data and income register transactions.");
+        } catch (err) {
+          const info = classifyError(err);
+          setStatus(info.kind, "Load failed: " + (err && err.message ? err.message : info.message));
+          if (err && err.kind === "auth") {
+            SESSION.token = "";
+            store.del("pbToken");
+            setAuthenticatedUI(false);
+          }
+        } finally {
+          state.loading = false;
+          setBusy();
+        }
+      }
+
+      function resetModuleState() {
+        state.txns = [];
+        state.txnById = new Map();
+        state.entriesByTxnId = new Map();
+        state.entriesById = new Map();
+        state.accounts = [];
+        state.accountById = new Map();
+        state.assets = [];
+        state.assetPrecisionById = new Map();
+        state.categories = [];
+        state.categoryById = new Map();
+        state.categoryByName = new Map();
+        state.payees = [];
+        state.payeeById = new Map();
+        state.selectedTxnIds = [];
+        state.selectionAnchorTxnId = "";
+        state.visibleTxnOrder = [];
+        state.editingTxnId = "";
+        state.editDraft = null;
+        state.pendingFocusSelector = "";
+        state.page = 1;
+        state.totalPages = 1;
+        state.totalItems = 0;
+        $("#registerBody").innerHTML = "";
+        $("#resultCount").textContent = "";
+        updatePageInfo();
+      }
+
+      function setupHeadSort() {
+        $("#registerTable").addEventListener("click", function(ev) {
+          const th = ev.target && ev.target.closest("th[data-sort]");
+          if (!th || !SESSION.token || state.loading || state.saving || state.deleting) return;
+          const col = th.getAttribute("data-sort") || "date";
+          if (state.sort.column === col) state.sort.direction = state.sort.direction === "asc" ? "desc" : "asc";
+          else {
+            state.sort.column = col;
+            state.sort.direction = col === "date" ? "desc" : "asc";
+          }
+          state.page = 1;
+          refreshAll();
+        });
+      }
+
+      function bindEvents() {
+        $("#btnLogin").addEventListener("click", async function() {
+          const base = String($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+          const email = String($("#pbEmail").value || "").trim();
+          const password = $("#pbPass").value || "";
+
+          if (!base || !email || !password) {
+            setStatus("bad", "Login failed: URL, email, and password are required.");
+            return;
+          }
+
+          store.set("pbUrl", base);
+          store.set("pbEmail", email);
+
+          try {
+            $("#btnLogin").disabled = true;
+            SESSION.base = base;
+            SESSION.token = "";
+            const res = await authWithPassword(email, password);
+            if (!res || !res.token) throw new Error("No token returned by PocketBase.");
+            SESSION.token = res.token;
+            store.set("pbToken", res.token);
+            setAuthenticatedUI(true);
+            setStatus("ok", "Login succeeded. Session saved in localStorage.");
+            await refreshAll();
+          } catch (err) {
+            SESSION.token = "";
+            store.del("pbToken");
+            setAuthenticatedUI(false);
+            const info = classifyError(err);
+            setStatus(info.kind, "Login failed: " + (err && err.message ? err.message : info.message));
+          } finally {
+            $("#btnLogin").disabled = false;
+            $("#pbPass").value = "";
+          }
+        });
+
+        $("#logoutLink").addEventListener("click", function(ev) {
+          ev.preventDefault();
+          SESSION.base = "";
+          SESSION.token = "";
+          store.del("pbUrl");
+          store.del("pbEmail");
+          store.del("pbToken");
+          $("#pbUrl").value = "";
+          $("#pbEmail").value = "";
+          $("#pbPass").value = "";
+          resetModuleState();
+          setAuthenticatedUI(false);
+          setStatus("ok", "Logged out. Local session cleared.");
+          setBusy();
+        });
+
+        $("#btnRefresh").addEventListener("click", refreshAll);
+        $("#btnNewTxn").addEventListener("click", startNewInlineEdit);
+        $("#btnDeleteTxn").addEventListener("click", deleteSelectedTransactions);
+        $("#btnEditSave").addEventListener("click", saveInlineEdit);
+        $("#btnEditCancel").addEventListener("click", cancelInlineEdit);
+
+        ["#fltFrom", "#fltTo"].forEach((sel) => {
+          $(sel).addEventListener("change", function() {
+            if (!SESSION.token || state.editingTxnId) return;
+            state.page = 1;
+            refreshAll();
+          });
+        });
+
+        $("#fltPayee").addEventListener("input", function() {
+          if (!SESSION.token || state.editingTxnId) return;
+          clearTimeout(state.payeeFilterTimer);
+          state.payeeFilterTimer = setTimeout(function() {
+            state.page = 1;
+            refreshAll();
+          }, 800);
+        });
+
+        $("#defaultPayrollAccount").addEventListener("change", function() {
+          store.set(KEY_PAYROLL_ACCOUNT, activePayrollAccountId());
+          if (state.editingTxnId) renderRegister();
+        });
+        $("#netPayCategory").addEventListener("change", function() {
+          const id = activeNetPayCategoryId();
+          if (id) store.set(KEY_NET_PAY_CATEGORY, id);
+          if (!SESSION.token || state.editingTxnId) return;
+          state.page = 1;
+          refreshAll();
+        });
+
+        $("#btnPrevPage").addEventListener("click", function() {
+          if (state.page <= 1 || state.loading || state.saving || state.deleting || state.editingTxnId) return;
+          state.page -= 1;
+          refreshAll();
+        });
+
+        $("#btnNextPage").addEventListener("click", function() {
+          if (state.page >= state.totalPages || state.loading || state.saving || state.deleting || state.editingTxnId) return;
+          state.page += 1;
+          refreshAll();
+        });
+
+        $("#perPage").addEventListener("change", function() {
+          const v = Number($("#perPage").value);
+          if (!Number.isFinite(v) || v < 1 || state.editingTxnId) return;
+          state.perPage = v;
+          state.page = 1;
+          refreshAll();
+        });
+
+        $("#registerBody").addEventListener("keydown", function(ev) {
+          if (!state.editingTxnId) return;
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            cancelInlineEdit();
+            return;
+          }
+          if (ev.key === "Enter") {
+            const t = ev.target;
+            if (!t || !(t.matches("input") || t.matches("select"))) return;
+            ev.preventDefault();
+            saveInlineEdit();
+          }
+        });
+      }
+
+      async function validateCachedSession() {
+        if (!SESSION.base || !SESSION.token) return false;
+        try {
+          const res = await authRefresh();
+          if (res && res.token) {
+            SESSION.token = res.token;
+            store.set("pbToken", res.token);
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      async function init() {
+        renderHead();
+        setupHeadSort();
+        bindEvents();
+        $("#pbUrl").value = store.get("pbUrl", "");
+        $("#pbEmail").value = store.get("pbEmail", "");
+        $("#perPage").value = String(state.perPage);
+        updatePageInfo();
+
+        SESSION.base = String($("#pbUrl").value || "").trim().replace(/\/+$/, "");
+        SESSION.token = String(store.get("pbToken", "") || "").trim();
+
+        if (SESSION.base && SESSION.token) {
+          const ok = await validateCachedSession();
+          if (ok) {
+            setAuthenticatedUI(true);
+            setStatus("ok", "Session restored via auth-refresh.");
+            await refreshAll();
+            return;
+          }
+        }
+
+        SESSION.token = "";
+        store.del("pbToken");
+        setAuthenticatedUI(false);
+        setStatus("warn", "Not authenticated.");
+        setBusy();
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>
