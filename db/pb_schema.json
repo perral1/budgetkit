@@ -694,9 +694,226 @@
     ],
     "indexes": [
       "CREATE INDEX `idx_IYM50qVFCA` ON `txns` (`date`)",
+      "CREATE INDEX `idx_txns_payee` ON `txns` (`payee`)",
       "CREATE INDEX `idx_z49QFX7Y2l` ON `txns` (`external_id`)"
     ],
     "system": false
+  },
+  {
+    "id": "pbc_1684821701",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": null,
+    "updateRule": null,
+    "deleteRule": null,
+    "name": "v_count_entries_per_account",
+    "type": "view",
+    "fields": [
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 0,
+        "min": 0,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180001",
+        "maxSize": 1,
+        "name": "account",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180002",
+        "maxSize": 1,
+        "name": "entry_count",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [],
+    "system": false,
+    "viewQuery": "SELECT\n  (e.account || '|count') AS id,\n  e.account AS account,\n  COUNT(1) AS entry_count\nFROM entries e\nWHERE e.account IS NOT NULL AND e.account != ''\nGROUP BY e.account;\n"
+  },
+  {
+    "id": "pbc_1684821702",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": null,
+    "updateRule": null,
+    "deleteRule": null,
+    "name": "v_count_entries_per_category",
+    "type": "view",
+    "fields": [
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 0,
+        "min": 0,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180003",
+        "maxSize": 1,
+        "name": "category",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180004",
+        "maxSize": 1,
+        "name": "entry_count",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [],
+    "system": false,
+    "viewQuery": "SELECT\n  (e.category || '|count') AS id,\n  e.category AS category,\n  COUNT(1) AS entry_count\nFROM entries e\nWHERE e.category IS NOT NULL AND e.category != ''\nGROUP BY e.category;\n"
+  },
+  {
+    "id": "pbc_1684821703",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": null,
+    "updateRule": null,
+    "deleteRule": null,
+    "name": "v_count_entries_per_asset",
+    "type": "view",
+    "fields": [
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 0,
+        "min": 0,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180005",
+        "maxSize": 1,
+        "name": "asset",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180006",
+        "maxSize": 1,
+        "name": "entry_count",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [],
+    "system": false,
+    "viewQuery": "SELECT\n  (e.asset || '|count') AS id,\n  e.asset AS asset,\n  COUNT(1) AS entry_count\nFROM entries e\nWHERE e.asset IS NOT NULL AND e.asset != ''\nGROUP BY e.asset;\n"
+  },
+  {
+    "id": "pbc_1684821704",
+    "listRule": "",
+    "viewRule": "",
+    "createRule": null,
+    "updateRule": null,
+    "deleteRule": null,
+    "name": "v_activity_per_status_account",
+    "type": "view",
+    "fields": [
+      {
+        "autogeneratePattern": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 0,
+        "min": 0,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180007",
+        "maxSize": 1,
+        "name": "account",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180008",
+        "maxSize": 1,
+        "name": "status",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180009",
+        "maxSize": 1,
+        "name": "entry_count",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      },
+      {
+        "hidden": false,
+        "id": "json2309180010",
+        "maxSize": 1,
+        "name": "qty_sum",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
+      }
+    ],
+    "indexes": [],
+    "system": false,
+    "viewQuery": "SELECT\n  (e.account || '|' || e.status) AS id,\n  e.account AS account,\n  e.status AS status,\n  COUNT(1) AS entry_count,\n  SUM(\n    CASE COALESCE(a.precision, 2)\n      WHEN 0 THEN e.qty\n      WHEN 1 THEN e.qty / 10.0\n      WHEN 2 THEN e.qty / 100.0\n      WHEN 3 THEN e.qty / 1000.0\n      WHEN 4 THEN e.qty / 10000.0\n      WHEN 5 THEN e.qty / 100000.0\n      WHEN 6 THEN e.qty / 1000000.0\n      WHEN 7 THEN e.qty / 10000000.0\n      WHEN 8 THEN e.qty / 100000000.0\n      WHEN 9 THEN e.qty / 1000000000.0\n      ELSE e.qty / 100.0\n    END\n  ) AS qty_sum\nFROM entries e\nLEFT JOIN assets a ON a.id = e.asset\nWHERE e.account IS NOT NULL AND e.account != ''\nGROUP BY e.account, e.status;\n"
   },
   {
     "id": "pbc_932273079",

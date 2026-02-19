@@ -118,6 +118,7 @@ Fields:
 
 Indexes:
 - `date`
+- `payee`
 - unique `external_id` (recommended; may include source prefix)
 
 ### 2.6 `entries`
@@ -177,6 +178,61 @@ Reference view query:
 - Uses `entries` joined to `categories`
 - Includes `category.kind in {income, expense}`
 - Groups by `strftime('%Y-%m', e.date), c.name`
+
+### 2.9 `v_count_entries_per_account` (view)
+
+Server-side entry counts by account id.
+
+Required fields:
+- `id` (text, unique per account)
+- `account` (text; account id)
+- `entry_count` (number; count of `entries` rows)
+
+Reference view query:
+- Uses `entries`
+- Groups by `entries.account`
+
+### 2.10 `v_count_entries_per_category` (view)
+
+Server-side entry counts by category id.
+
+Required fields:
+- `id` (text, unique per category)
+- `category` (text; category id)
+- `entry_count` (number; count of `entries` rows)
+
+Reference view query:
+- Uses `entries`
+- Excludes null/blank categories
+- Groups by `entries.category`
+
+### 2.11 `v_count_entries_per_asset` (view)
+
+Server-side entry counts by asset id.
+
+Required fields:
+- `id` (text, unique per asset)
+- `asset` (text; asset id)
+- `entry_count` (number; count of `entries` rows)
+
+Reference view query:
+- Uses `entries`
+- Groups by `entries.asset`
+
+### 2.12 `v_activity_per_status_account` (view)
+
+Server-side account activity grouped by status.
+
+Required fields:
+- `id` (text, unique per account/status)
+- `account` (text; account id)
+- `status` (text; `scheduled | pending | cleared`)
+- `entry_count` (number; count of rows in the group)
+- `qty_sum` (number; summed quantity converted to major units using related `assets.precision` with fallback `2`)
+
+Reference view query:
+- Uses `entries`
+- Groups by `entries.account, entries.status`
 
 ## 3. Data Semantics (Required)
 

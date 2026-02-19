@@ -533,21 +533,12 @@
         };
       }
 
-      function categoryKindFromName(name, qty) {
+      function categoryKindFromName(name, _qty) {
         const n = String(name || "").trim().toLowerCase();
         const lead = n.includes(":") ? n.slice(0, n.indexOf(":")).trim() : n;
         if (lead === "income") return "income";
-        if (lead === "spending" || lead === "expense") return "expense";
         if (lead === "transfer") return "transfer";
-        if (lead === "trade_cash") return "trade_cash";
-        if (lead === "trade_asset") return "trade_asset";
-        if (lead === "fee") return "fee";
-        if (lead === "withholding") return "withholding";
-        if (lead === "benefit") return "benefit";
-        if (lead === "employer_contrib") return "employer_contrib";
-        if (lead === "info") return "info";
-        if (qty != null) return qty >= 0 ? "income" : "expense";
-        return "other";
+        return "expense";
       }
 
       function isSharedSavingsCategory(name) {

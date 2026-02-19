@@ -675,7 +675,6 @@
   let categoryEntryCounts = new Map();
   let payeeTxnCounts = new Map();
   let payeeNewestTxnDates = new Map();
-  let payeeIdsByCategory = new Map();
   let duplicateCandidates = [];
   let duplicatePayeeById = new Map();
   let editing = { mode:"new", id:null, ids:[], data:null, mixedKeys:new Set(), lockedKeys:new Set() };
@@ -703,23 +702,49 @@
     categories: new Set(),
     payees: new Set()
   };
+  const cacheState = {
+    categoriesLoaded: false,
+    categoriesBase: "",
+    categoriesLoadedAt: 0
+  };
+  const CACHE_TTL_MS = 30000;
+  let lastSlowPathNotice = "";
+
+  function clearDerivedMaps(){
+    accountStats = new Map();
+    assetEntryCounts = new Map();
+    categoryEntryCounts = new Map();
+    payeeTxnCounts = new Map();
+    payeeNewestTxnDates = new Map();
+  }
+
+  function invalidateCaches({ categories=false, stats=false, payees=false } = {}){
+    if(categories){
+      cacheState.categoriesLoaded = false;
+      cacheState.categoriesBase = "";
+      cacheState.categoriesLoadedAt = 0;
+      categoriesIndex = new Map();
+    }
+    if(stats || payees){
+      clearDerivedMaps();
+    }
+  }
+
+  async function ensureCategoriesLoaded(force=false){
+    const baseChanged = cacheState.categoriesBase !== SESSION.base;
+    const stale = (Date.now() - Number(cacheState.categoriesLoadedAt || 0)) > CACHE_TTL_MS;
+    if(!force && cacheState.categoriesLoaded && !baseChanged && !stale) return;
+    const catsAllRes = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false, page:1, perPage:500 });
+    categoriesIndex = new Map((catsAllRes.items || []).map(c => [c.id, c]));
+    cacheState.categoriesLoaded = true;
+    cacheState.categoriesBase = SESSION.base;
+    cacheState.categoriesLoadedAt = Date.now();
+  }
 
   function fmtBalance(n){
     const num = Number(n || 0);
     if(!Number.isFinite(num)) return "0";
     return num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 });
-  }
-
-  function normalizePrecision(raw){
-    const n = Number(raw);
-    if(Number.isInteger(n) && n >= 0 && n <= 9) return n;
-    return 2;
-  }
-
-  function minorToMajor(minor, precision){
-    const n = Number(minor || 0);
-    if(!Number.isFinite(n) || !Number.isSafeInteger(n)) return 0;
-    return n / (10 ** precision);
   }
 
   function parseTxnDate(raw){
@@ -852,128 +877,150 @@
     return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity:"base" }) <= 0 ? a : b;
   }
 
-  async function listAllEntriesForStats(){
-    const perPage = 500;
+  function viewText(v){
+    if(v == null) return "";
+    if(typeof v === "string") return v;
+    if(typeof v === "number" || typeof v === "boolean") return String(v);
+    return String(v ?? "");
+  }
+
+  function viewNum(v){
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function escapePbFilterValue(v){
+    return String(v || "").replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  }
+
+  function payeeFilterExprByIds(payeeIds){
+    const ids = Array.from(new Set((payeeIds || []).map((id) => String(id || "")).filter(Boolean)));
+    if(!ids.length) return "";
+    return "(" + ids.map((id) => `payee = "${escapePbFilterValue(id)}"`).join(" || ") + ")";
+  }
+
+  async function listAllRecordsByFilter(collection, { filter="", sort="", perPage=500 } = {}){
     let page = 1;
     let all = [];
-
     while(true){
-      const data = await pbFetch(`/api/collections/${encodeURIComponent("entries")}/records?page=${page}&perPage=${perPage}`, { method:"GET" });
+      const filterParam = filter ? `&filter=${encodeURIComponent(filter)}` : "";
+      const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+      const url = `/api/collections/${encodeURIComponent(collection)}/records?page=${page}&perPage=${perPage}${sortParam}${filterParam}`;
+      const data = await pbFetch(url, { method:"GET" });
       const items = data?.items || [];
       all = all.concat(items);
-      const totalPages = Number(data?.totalPages || 1);
+      const totalPages = Math.max(1, Number(data?.totalPages || 1));
       if(page >= totalPages) break;
       page += 1;
     }
-
     return all;
   }
 
-  async function listAllAssetsForStats(){
-    const perPage = 500;
-    let page = 1;
-    let all = [];
-
-    while(true){
-      const data = await pbFetch(`/api/collections/${encodeURIComponent("assets")}/records?page=${page}&perPage=${perPage}`, { method:"GET" });
-      const items = data?.items || [];
-      all = all.concat(items);
-      const totalPages = Number(data?.totalPages || 1);
-      if(page >= totalPages) break;
-      page += 1;
-    }
-
-    return all;
+  async function loadAccountStatsFromViews(){
+    const [entryRows, statusRows] = await Promise.all([
+      listAllRecords("v_count_entries_per_account", { perPage:500 }),
+      listAllRecords("v_activity_per_status_account", { perPage:500 })
+    ]);
+    accountStats = new Map();
+    entryRows.forEach((row) => {
+      const accountId = viewText(row?.account);
+      if(!accountId) return;
+      accountStats.set(accountId, { current: 0, cleared: 0, entryCount: viewNum(row?.entry_count) });
+    });
+    statusRows.forEach((row) => {
+      const accountId = viewText(row?.account);
+      if(!accountId) return;
+      const status = viewText(row?.status).toLowerCase();
+      const qty = viewNum(row?.qty_sum);
+      const next = accountStats.get(accountId) || { current: 0, cleared: 0, entryCount: 0 };
+      if(status === "pending" || status === "cleared") next.current += qty;
+      if(status === "cleared") next.cleared += qty;
+      accountStats.set(accountId, next);
+    });
   }
 
-  async function listAllTxnsForStats(){
-    const perPage = 500;
-    let page = 1;
-    let all = [];
-
-    while(true){
-      const data = await pbFetch(`/api/collections/${encodeURIComponent("txns")}/records?page=${page}&perPage=${perPage}`, { method:"GET" });
-      const items = data?.items || [];
-      all = all.concat(items);
-      const totalPages = Number(data?.totalPages || 1);
-      if(page >= totalPages) break;
-      page += 1;
-    }
-
-    return all;
+  async function loadAssetEntryCountsFromView(){
+    const rows = await listAllRecords("v_count_entries_per_asset", { perPage:500 });
+    assetEntryCounts = new Map();
+    rows.forEach((row) => {
+      const assetId = viewText(row?.asset);
+      if(!assetId) return;
+      assetEntryCounts.set(assetId, viewNum(row?.entry_count));
+    });
   }
 
-  async function computeEntryStats(){
-    const accountMap = new Map();
-    const assetMap = new Map();
-    const categoryMap = new Map();
-    const payeeMap = new Map();
-    const payeeNewestTxnDateMap = new Map();
-    const payeeIdsByCategoryMap = new Map();
-    const [entries, assets, txns] = await Promise.all([listAllEntriesForStats(), listAllAssetsForStats(), listAllTxnsForStats()]);
-    const precisionByAssetId = new Map(assets.map(a => [String(a?.id || ""), normalizePrecision(a?.precision)]));
-    const payeeByTxnId = new Map();
+  async function loadCategoryEntryCountsFromView(){
+    const rows = await listAllRecords("v_count_entries_per_category", { perPage:500 });
+    categoryEntryCounts = new Map();
+    rows.forEach((row) => {
+      const categoryId = viewText(row?.category);
+      if(!categoryId) return;
+      categoryEntryCounts.set(categoryId, viewNum(row?.entry_count));
+    });
+  }
 
-    txns.forEach((t) => {
-      const txnId = String(t?.id || "");
-      const payeeId = String(t?.payee || "");
-      const txnDateRaw = String(t?.date || "");
-      if(txnId && payeeId) payeeByTxnId.set(txnId, payeeId);
+  function computePayeeStatsFromTxns(txns){
+    const counts = new Map();
+    const newest = new Map();
+    (txns || []).forEach((txn) => {
+      const payeeId = viewText(txn?.payee);
       if(!payeeId) return;
-      payeeMap.set(payeeId, (payeeMap.get(payeeId) || 0) + 1);
-      if(txnDateRaw){
-        const nextD = parseTxnDate(txnDateRaw);
-        if(nextD){
-          const prevRaw = payeeNewestTxnDateMap.get(payeeId) || "";
-          const prevD = parseTxnDate(prevRaw);
-          if(!prevD || nextD.getTime() > prevD.getTime()){
-            payeeNewestTxnDateMap.set(payeeId, txnDateRaw);
-          }
-        }
+      counts.set(payeeId, (counts.get(payeeId) || 0) + 1);
+      const raw = viewText(txn?.date);
+      if(!raw) return;
+      const prevRaw = newest.get(payeeId) || "";
+      const prevDate = parseTxnDate(prevRaw);
+      const nextDate = parseTxnDate(raw);
+      if(nextDate && (!prevDate || nextDate.getTime() > prevDate.getTime())){
+        newest.set(payeeId, raw);
       }
     });
+    return { counts, newest };
+  }
 
-    entries.forEach(e => {
-      const accountId = e?.account;
-      const assetId = e?.asset;
-      const categoryId = e?.category;
-      const txnId = String(e?.txn || "");
-      if(accountId){
-        const qtyMinor = Number(e?.qty || 0);
-        if(Number.isFinite(qtyMinor) && Number.isSafeInteger(qtyMinor)){
-          const precision = precisionByAssetId.get(String(assetId || "")) ?? 2;
-          const qty = minorToMajor(qtyMinor, precision);
-          const status = String(e?.status || "").toLowerCase();
-          const row = accountMap.get(accountId) || { current: 0, cleared: 0, entryCount: 0 };
-          row.entryCount += 1;
-          if(status === "cleared" || status === "pending"){
-            row.current += qty;
-          }
-          if(status === "cleared"){
-            row.cleared += qty;
-          }
-          accountMap.set(accountId, row);
-        }
-      }
-      if(assetId){
-        assetMap.set(assetId, (assetMap.get(assetId) || 0) + 1);
-      }
-      if(categoryId){
-        categoryMap.set(categoryId, (categoryMap.get(categoryId) || 0) + 1);
-      }
-      const catId = String(categoryId || "");
-      const payeeId = payeeByTxnId.get(txnId) || "";
-      if(catId && payeeId){
-        let payees = payeeIdsByCategoryMap.get(catId);
-        if(!payees){
-          payees = new Set();
-          payeeIdsByCategoryMap.set(catId, payees);
-        }
-        payees.add(payeeId);
-      }
-    });
+  async function computePayeeStatsForPayeeIds(payeeIds){
+    const expr = payeeFilterExprByIds(payeeIds);
+    if(!expr){
+      payeeTxnCounts = new Map();
+      payeeNewestTxnDates = new Map();
+      return;
+    }
+    const txns = await listAllRecordsByFilter("txns", { filter: expr, perPage:500 });
+    const stats = computePayeeStatsFromTxns(txns);
+    payeeTxnCounts = stats.counts;
+    payeeNewestTxnDates = stats.newest;
+  }
 
-    return { accountMap, assetMap, categoryMap, payeeMap, payeeNewestTxnDateMap, payeeIdsByCategoryMap };
+  async function computePayeeStatsForAllPayeesBatched(payeeIds, batchSize=25){
+    const ids = Array.from(new Set((payeeIds || []).map((id) => String(id || "")).filter(Boolean)));
+    const counts = new Map();
+    const newest = new Map();
+    if(!ids.length){
+      payeeTxnCounts = counts;
+      payeeNewestTxnDates = newest;
+      return;
+    }
+    for(let i = 0; i < ids.length; i += batchSize){
+      const batch = ids.slice(i, i + batchSize);
+      const expr = payeeFilterExprByIds(batch);
+      if(!expr) continue;
+      const txns = await listAllRecordsByFilter("txns", { filter: expr, perPage:500 });
+      txns.forEach((txn) => {
+        const payeeId = viewText(txn?.payee);
+        if(!payeeId) return;
+        counts.set(payeeId, (counts.get(payeeId) || 0) + 1);
+        const raw = viewText(txn?.date);
+        if(!raw) return;
+        const prevRaw = newest.get(payeeId) || "";
+        const prevDate = parseTxnDate(prevRaw);
+        const nextDate = parseTxnDate(raw);
+        if(nextDate && (!prevDate || nextDate.getTime() > prevDate.getTime())){
+          newest.set(payeeId, raw);
+        }
+      });
+    }
+    payeeTxnCounts = counts;
+    payeeNewestTxnDates = newest;
   }
 
   function entriesCountForRecord(tab, record){
@@ -1149,7 +1196,9 @@
       done += 1;
     }
     toast("ok", "Updated", `${done} ${schema.label.toLowerCase()} ${nextArchived ? "archived" : "unarchived"}.`);
-    refresh();
+    const changedCategories = activeTab === "categories";
+    if(changedCategories) invalidateCaches({ categories:true });
+    refresh({ refreshCategories: changedCategories });
   }
 
   async function deleteSelectedRows(){
@@ -1169,7 +1218,9 @@
       done += 1;
     }
     toast("ok", "Deleted", `${done} ${schema.label.toLowerCase()} deleted.`);
-    refresh();
+    const changedCategories = activeTab === "categories";
+    if(changedCategories) invalidateCaches({ categories:true });
+    refresh({ refreshCategories: changedCategories });
   }
 
   async function mergeSelectedPayees(){
@@ -1205,6 +1256,7 @@
     }else{
       toast("ok", "Merge complete", `Moved ${moved} txn(s) to "${targetLabel}" and deleted ${deleted} payee(s).` + (adoptedCategory ? ` Card category set to ${adoptedCategory}.` : ""));
     }
+    invalidateCaches({ payees:true });
     await refresh();
 
     let mergedPayee = records.find((r) => String(r?.id || "") === String(target.id || ""));
@@ -1226,9 +1278,10 @@
     if(!window.confirm("Cleanup payees? This will delete payees with 0 linked txns and archive payees whose newest txn is over 1 year old.")) return;
 
     const allPayees = await listAllRecords("payees", { q:"", showArchived:true, onlyArchived:false, perPage:500, sort:"name" });
-    const stats = await computeEntryStats();
-    const txnCounts = stats.payeeMap || new Map();
-    const newestByPayee = stats.payeeNewestTxnDateMap || new Map();
+    const allTxns = await listAllRecordsByFilter("txns", { perPage:500 });
+    const stats = computePayeeStatsFromTxns(allTxns);
+    const txnCounts = stats.counts;
+    const newestByPayee = stats.newest;
     const cutoff = new Date();
     cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 1);
 
@@ -1272,6 +1325,7 @@
     }else{
       toast("ok", "Cleanup complete", `Deleted ${deleted} payee(s). Archived ${archived} payee(s).`);
     }
+    invalidateCaches({ payees:true });
     refresh();
   }
 
@@ -1318,8 +1372,7 @@
     let deleted = 0;
     let deleteFailed = 0;
     let firstError = "";
-    const allTxns = await listAllTxnsForStats();
-    const txnsToMove = allTxns.filter((t) => sourceIdSet.has(String(t?.payee || "")));
+    const txnsToMove = await listAllRecordsByFilter("txns", { filter: payeeFilterExprByIds(sourceIdSet), perPage:500 });
 
     for(const txn of txnsToMove){
       try{
@@ -1412,6 +1465,7 @@
           }else{
             toast("ok", "Merged", `"${source.name || source.id}" merged into "${target.name || target.id}".` + (res.adoptedCategory ? ` Card category set to ${res.adoptedCategory}.` : ""));
           }
+          invalidateCaches({ payees:true });
           await refresh();
           showDupModal(false);
           let mergedPayee = records.find((r) => String(r?.id || "") === String(target.id || ""));
@@ -1434,6 +1488,8 @@
 
   async function runPayeeDuplicateDetection(openModal){
     const allPayees = await listAllRecords("payees", { q:"", showArchived:true, onlyArchived:false, perPage:500, sort:"name" });
+    const payeeIds = allPayees.map((p) => String(p?.id || "")).filter(Boolean);
+    await computePayeeStatsForAllPayeesBatched(payeeIds, 25);
     duplicatePayeeById = new Map(allPayees.map((p) => [String(p?.id || ""), p]));
     duplicateCandidates = buildPayeeDuplicateCandidates(allPayees.filter((p) => String(p?.name || "").trim()));
     renderDuplicateCandidates();
@@ -1569,12 +1625,17 @@
     const schema = SCHEMA[activeTab];
     const sortState = tableSortStateForTab(activeTab);
     const column = schema.columns.find(c => c.key === sortState.key) || schema.columns[0];
+    if(activeTab === "payees" && (column?.render === "payeeTxnCount" || column?.render === "payeeNewestTxnDate")) return "";
     if(!isServerSortableColumn(column)) return "";
     const key = column.key || "id";
     return (sortState.direction === "desc" ? "-" : "") + key;
   }
 
   function updatePagerUI(){
+    const pager = $(".pager");
+    const isPayees = activeTab === "payees";
+    if(pager) pager.style.display = isPayees ? "flex" : "none";
+    if(!isPayees) return;
     const paging = tablePagingStateForTab(activeTab);
     const page = Math.max(1, paging.page || 1);
     const totalPages = Math.max(1, paging.totalPages || 1);
@@ -1632,34 +1693,112 @@
     return all;
   }
 
-  async function listFilteredPayees({ q="", showArchived=false, onlyArchived=false, page=1, perPage=50, sort="", cardCategory="", categoryId="" }={}){
-    const allPayees = await listAllRecords("payees", { q, showArchived, onlyArchived, perPage:500, sort });
-    let filtered = allPayees.slice();
+  function isPayeeDerivedSort(sortState){
+    const key = String(sortState?.key || "");
+    return key === "txn_count" || key === "newest_txn_date";
+  }
+
+  function buildPayeeFilter({ q="", showArchived=false, onlyArchived=false, cardCategory="" } = {}){
+    const filterParts = [];
+    const query = String(q || "").trim();
+    if(query){
+      const esc = escapePbFilterValue(query);
+      filterParts.push(`name ~ "${esc}" || card_category ~ "${esc}"`);
+    }
+    if(onlyArchived){
+      filterParts.push(`is_archived = true`);
+    }else if(!showArchived){
+      filterParts.push(`is_archived = false`);
+    }
     if(cardCategory){
       if(cardCategory === "__none__"){
-        filtered = filtered.filter((p) => !String(p?.card_category || "").trim());
+        filterParts.push(`(card_category = "" || card_category = null)`);
       }else{
-        filtered = filtered.filter((p) => String(p?.card_category || "") === cardCategory);
+        filterParts.push(`card_category = "${escapePbFilterValue(cardCategory)}"`);
       }
     }
-    if(categoryId){
-      const allowed = payeeIdsByCategory.get(String(categoryId || "")) || new Set();
-      filtered = filtered.filter((p) => allowed.has(String(p?.id || "")));
-    }
+    return filterParts.join(" && ");
+  }
 
-    const safePerPage = Math.max(1, perPage);
-    const totalItems = filtered.length;
-    const totalPages = Math.max(1, Math.ceil(totalItems / safePerPage));
-    const safePage = Math.min(Math.max(1, page), totalPages);
-    const start = (safePage - 1) * safePerPage;
-    const end = start + safePerPage;
+  async function listPayeesPage({ q="", showArchived=false, onlyArchived=false, cardCategory="", page=1, perPage=50, sort="" } = {}){
+    const filter = buildPayeeFilter({ q, showArchived, onlyArchived, cardCategory });
+    const filterParam = filter ? `&filter=${encodeURIComponent(filter)}` : "";
+    const sortParam = sort ? `&sort=${encodeURIComponent(sort)}` : "";
+    const url = `/api/collections/${encodeURIComponent("payees")}/records?page=${page}&perPage=${perPage}${sortParam}${filterParam}`;
+    const data = await pbFetch(url, { method:"GET" });
     return {
-      items: filtered.slice(start, end),
+      items: data?.items || [],
+      page: Math.max(1, Number(data?.page || page)),
+      perPage: Math.max(1, Number(data?.perPage || perPage)),
+      totalPages: Math.max(1, Number(data?.totalPages || 1)),
+      totalItems: Math.max(0, Number(data?.totalItems || 0))
+    };
+  }
+
+  async function listAllPayeesFiltered({ q="", showArchived=false, onlyArchived=false, cardCategory="", sort="" } = {}){
+    let page = 1;
+    let all = [];
+    while(true){
+      const data = await listPayeesPage({ q, showArchived, onlyArchived, cardCategory, page, perPage:500, sort });
+      all = all.concat(data.items || []);
+      if(page >= data.totalPages) break;
+      page += 1;
+    }
+    return all;
+  }
+
+  function slicePage(items, page, perPage){
+    const safePerPage = Math.max(1, Number(perPage || 50));
+    const totalItems = (items || []).length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / safePerPage));
+    const safePage = Math.min(Math.max(1, Number(page || 1)), totalPages);
+    const start = (safePage - 1) * safePerPage;
+    return {
+      items: (items || []).slice(start, start + safePerPage),
       page: safePage,
       perPage: safePerPage,
       totalPages,
       totalItems
     };
+  }
+
+  function notifySlowPath(key, title, msg){
+    if(lastSlowPathNotice === key) return;
+    lastSlowPathNotice = key;
+    toast("ok", title, msg);
+  }
+
+  async function computeAllowedPayeesByCategoryId(categoryId, allTxns){
+    const categoryIdStr = String(categoryId || "");
+    if(!categoryIdStr) return null;
+    const entries = await listAllRecordsByFilter("entries", {
+      filter: `category = "${escapePbFilterValue(categoryIdStr)}"`,
+      perPage: 500
+    });
+    const txnIds = new Set((entries || []).map((e) => viewText(e?.txn)).filter(Boolean));
+    const out = new Set();
+    (allTxns || []).forEach((t) => {
+      const txnId = viewText(t?.id);
+      const payeeId = viewText(t?.payee);
+      if(!txnId || !payeeId) return;
+      if(txnIds.has(txnId)) out.add(payeeId);
+    });
+    return out;
+  }
+
+  function sortPayeesByDerived(rows, sortState){
+    const schema = SCHEMA.payees;
+    const column = schema.columns.find((c) => c.key === sortState.key) || schema.columns[0];
+    const direction = sortState.direction || "asc";
+    const sorted = (rows || []).slice();
+    sorted.sort((a, b) => {
+      const av = rowSortValue(a, column);
+      const bv = rowSortValue(b, column);
+      const cmp = compareSortValues(av, bv, direction);
+      if(cmp !== 0) return cmp;
+      return String(a?.id || "").localeCompare(String(b?.id || ""), undefined, { sensitivity:"base", numeric:true });
+    });
+    return sorted;
   }
 
   function rowSortValue(row, column){
@@ -2163,22 +2302,93 @@
     return out;
   }
 
-  async function refresh(){
+  function isViewMissingError(err){
+    const msg = String(err?.message || err || "");
+    return msg.includes("v_count_entries_per_account")
+      || msg.includes("v_count_entries_per_category")
+      || msg.includes("v_count_entries_per_asset")
+      || msg.includes("v_activity_per_status_account")
+      || (msg.startsWith("HTTP 404:") && (activeTab === "accounts" || activeTab === "assets" || activeTab === "categories"));
+  }
+
+  async function loadPayeesForRefresh({ q="", showArchived=false, onlyArchived=false, cardCategory="", categoryId="" } = {}){
+    const paging = tablePagingStateForTab("payees");
+    const sortState = tableSortStateForTab("payees");
+    const slowByCategory = !!String(categoryId || "");
+    const slowBySort = isPayeeDerivedSort(sortState);
+    const slowPath = slowByCategory || slowBySort;
+
+    if(!slowPath){
+      lastSlowPathNotice = "";
+      let listRes = await listPayeesPage({
+        q,
+        showArchived,
+        onlyArchived,
+        cardCategory,
+        page: paging.page,
+        perPage: paging.perPage,
+        sort: serverSortExprForActiveTab()
+      });
+      if(paging.page > listRes.totalPages){
+        paging.page = listRes.totalPages;
+        listRes = await listPayeesPage({
+          q,
+          showArchived,
+          onlyArchived,
+          cardCategory,
+          page: paging.page,
+          perPage: paging.perPage,
+          sort: serverSortExprForActiveTab()
+        });
+      }
+      const ids = (listRes.items || []).map((p) => String(p?.id || "")).filter(Boolean);
+      await computePayeeStatsForPayeeIds(ids);
+      return listRes;
+    }
+
+    if(slowByCategory){
+      notifySlowPath("payees-category", "Slow path", "Payee category filter loads full txn activity for accurate matching.");
+    }else if(slowBySort){
+      notifySlowPath("payees-sort", "Slow path", "Sorting payees by Txns/Newest Txn computes global stats from all txns.");
+    }
+
+    const allPayees = await listAllPayeesFiltered({
+      q,
+      showArchived,
+      onlyArchived,
+      cardCategory,
+      sort: slowBySort ? "" : serverSortExprForActiveTab()
+    });
+    const allTxns = await listAllRecordsByFilter("txns", { perPage:500 });
+    const stats = computePayeeStatsFromTxns(allTxns);
+    payeeTxnCounts = stats.counts;
+    payeeNewestTxnDates = stats.newest;
+
+    let allowedPayees = null;
+    if(slowByCategory){
+      allowedPayees = await computeAllowedPayeesByCategoryId(categoryId, allTxns);
+    }
+    let filtered = (allPayees || []).slice();
+    if(allowedPayees){
+      filtered = filtered.filter((p) => allowedPayees.has(String(p?.id || "")));
+    }
+    if(slowBySort){
+      filtered = sortPayeesByDerived(filtered, sortState);
+    }
+    return slicePage(filtered, paging.page, paging.perPage);
+  }
+
+  async function refresh({ force=false, refreshCategories=false } = {}){
     try{
       $("#btnRefresh").disabled = true;
       $("#btnNew").disabled = true;
-      $("#btnPrevPage").disabled = true;
-      $("#btnNextPage").disabled = true;
-      $("#perPage").disabled = true;
-      accountStats = new Map();
-      assetEntryCounts = new Map();
-      categoryEntryCounts = new Map();
-      payeeTxnCounts = new Map();
-      payeeNewestTxnDates = new Map();
-      payeeIdsByCategory = new Map();
+      if(activeTab === "payees"){
+        $("#btnPrevPage").disabled = true;
+        $("#btnNextPage").disabled = true;
+        $("#perPage").disabled = true;
+      }
 
-      const catsAllRes = await listRecords("categories", { q:"", showArchived:true, onlyArchived:false, page:1, perPage:500 });
-      categoriesIndex = new Map((catsAllRes.items || []).map(c => [c.id, c]));
+      await ensureCategoriesLoaded(force || refreshCategories);
       refillPayeeFilterOptions();
 
       const q = $("#q").value;
@@ -2188,48 +2398,50 @@
       const payeeCategoryId = activeTab === "payees" ? String($("#payeeCategoryFilter").value || "") : "";
       if(onlyArchived) $("#showArchived").checked = true;
 
-      const stats = await computeEntryStats();
-      accountStats = stats.accountMap;
-      assetEntryCounts = stats.assetMap;
-      categoryEntryCounts = stats.categoryMap;
-      payeeTxnCounts = stats.payeeMap;
-      payeeNewestTxnDates = stats.payeeNewestTxnDateMap || new Map();
-      payeeIdsByCategory = stats.payeeIdsByCategoryMap || new Map();
-
-      const paging = tablePagingStateForTab(activeTab);
       let listRes;
-      if(activeTab === "payees" && (payeeCardCategory || payeeCategoryId)){
-        listRes = await listFilteredPayees({
+      if(activeTab === "accounts"){
+        lastSlowPathNotice = "";
+        await loadAccountStatsFromViews();
+        const all = await listAllRecords("accounts", {
           q,
           showArchived,
           onlyArchived,
-          page: paging.page,
-          perPage: paging.perPage,
-          sort: serverSortExprForActiveTab(),
+          perPage: 500,
+          sort: serverSortExprForActiveTab()
+        });
+        listRes = { items: all, page: 1, perPage: all.length || 1, totalPages: 1, totalItems: all.length };
+      }else if(activeTab === "assets"){
+        lastSlowPathNotice = "";
+        await loadAssetEntryCountsFromView();
+        const all = await listAllRecords("assets", {
+          q,
+          showArchived,
+          onlyArchived,
+          perPage: 500,
+          sort: serverSortExprForActiveTab()
+        });
+        listRes = { items: all, page: 1, perPage: all.length || 1, totalPages: 1, totalItems: all.length };
+      }else if(activeTab === "categories"){
+        lastSlowPathNotice = "";
+        await loadCategoryEntryCountsFromView();
+        const all = await listAllRecords("categories", {
+          q,
+          showArchived,
+          onlyArchived,
+          perPage: 500,
+          sort: serverSortExprForActiveTab()
+        });
+        listRes = { items: all, page: 1, perPage: all.length || 1, totalPages: 1, totalItems: all.length };
+      }else{
+        listRes = await loadPayeesForRefresh({
+          q,
+          showArchived,
+          onlyArchived,
           cardCategory: payeeCardCategory,
           categoryId: payeeCategoryId
         });
-      }else{
-        listRes = await listRecords(activeTab, {
-          q,
-          showArchived,
-          onlyArchived,
-          page: paging.page,
-          perPage: paging.perPage,
-          sort: serverSortExprForActiveTab()
-        });
-        if(paging.page > listRes.totalPages){
-          paging.page = listRes.totalPages;
-          listRes = await listRecords(activeTab, {
-            q,
-            showArchived,
-            onlyArchived,
-            page: paging.page,
-            perPage: paging.perPage,
-            sort: serverSortExprForActiveTab()
-          });
-        }
       }
+      const paging = tablePagingStateForTab(activeTab);
       paging.page = listRes.page;
       paging.totalPages = listRes.totalPages;
       paging.totalItems = listRes.totalItems;
@@ -2239,41 +2451,47 @@
       renderBulkActions();
       updatePagerUI();
     }catch(e){
+      if(isViewMissingError(e)){
+        toast("bad", "Schema upgrade required", "Required management views are missing. Add v_count_entries_per_account, v_count_entries_per_category, v_count_entries_per_asset, and v_activity_per_status_account.");
+      }else{
+        toast("bad", "Refresh failed", e.message || String(e));
+      }
       records = [];
       selectedSetForTab(activeTab).clear();
       renderTable();
       renderBulkActions();
       updatePagerUI();
-      toast("bad", "Refresh failed", e.message || String(e));
     }finally{
       $("#btnRefresh").disabled = false;
       $("#btnNew").disabled = false;
-      $("#btnPrevPage").disabled = false;
-      $("#btnNextPage").disabled = false;
-      $("#perPage").disabled = false;
+      if(activeTab === "payees"){
+        $("#btnPrevPage").disabled = false;
+        $("#btnNextPage").disabled = false;
+        $("#perPage").disabled = false;
+      }
       updatePagerUI();
     }
   }
 
   $$(".tab").forEach(b => b.addEventListener("click", () => setActiveTab(b.dataset.tab)));
 
-  $("#btnRefresh").addEventListener("click", refresh);
+  $("#btnRefresh").addEventListener("click", () => refresh({ force:true }));
   $("#btnNew").addEventListener("click", () => openEditor("new", {}));
 
   $("#q").addEventListener("keydown", (e) => {
     if(e.key === "Enter"){
-      tablePagingStateForTab(activeTab).page = 1;
+      if(activeTab === "payees") tablePagingStateForTab(activeTab).page = 1;
       refresh();
     }
   });
   $("#showArchived").addEventListener("change", () => {
     if(!$("#showArchived").checked) $("#onlyArchived").checked = false;
-    tablePagingStateForTab(activeTab).page = 1;
+    if(activeTab === "payees") tablePagingStateForTab(activeTab).page = 1;
     refresh();
   });
   $("#onlyArchived").addEventListener("change", () => {
     if($("#onlyArchived").checked) $("#showArchived").checked = true;
-    tablePagingStateForTab(activeTab).page = 1;
+    if(activeTab === "payees") tablePagingStateForTab(activeTab).page = 1;
     refresh();
   });
   $("#payeeCardCategoryFilter").addEventListener("change", () => {
@@ -2285,18 +2503,21 @@
     refresh();
   });
   $("#btnPrevPage").addEventListener("click", () => {
+    if(activeTab !== "payees") return;
     const paging = tablePagingStateForTab(activeTab);
     if(paging.page <= 1) return;
     paging.page -= 1;
     refresh();
   });
   $("#btnNextPage").addEventListener("click", () => {
+    if(activeTab !== "payees") return;
     const paging = tablePagingStateForTab(activeTab);
     if(paging.page >= paging.totalPages) return;
     paging.page += 1;
     refresh();
   });
   $("#perPage").addEventListener("change", () => {
+    if(activeTab !== "payees") return;
     const paging = tablePagingStateForTab(activeTab);
     const v = Number($("#perPage").value);
     if(!Number.isFinite(v) || v < 1) return;
@@ -2364,7 +2585,9 @@
       }
 
       showModal(false);
-      refresh();
+      const changedCategories = activeTab === "categories";
+      if(changedCategories) invalidateCaches({ categories:true });
+      refresh({ refreshCategories: changedCategories });
     }catch(e){
       toast("bad", "Save failed", e.message || String(e));
     }finally{
@@ -2417,6 +2640,7 @@
     $("#pbPass").value = "";
     setLoggedInUI(false);
     showDupModal(false);
+    invalidateCaches({ categories:true, payees:true });
     records = [];
     selectedSetForTab(activeTab).clear();
     tablePagingStateForTab(activeTab).page = 1;
@@ -2460,10 +2684,11 @@
 
       SESSION.token = token;
       store.set("pbToken", token);
+      invalidateCaches({ categories:true, payees:true });
 
       setLoggedInUI(true);
       toast("ok", "Login succeeded", "Session saved.");
-      refresh();
+      refresh({ force:true });
     }catch(e){
       SESSION.token = "";
       store.del("pbToken");
@@ -2492,8 +2717,9 @@
     if(SESSION.base && SESSION.token){
       const ok = await validateCachedSession();
       if(ok){
+        invalidateCaches({ categories:true, payees:true });
         setLoggedInUI(true);
-        refresh();
+        refresh({ force:true });
         return;
       }
       // token invalid
