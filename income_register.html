@@ -275,7 +275,6 @@
       ];
       const NET_PAY_COLUMN = "Net Pay";
       const PAYSTUB_COLUMNS = PAYSTUB_DETAIL_COLUMNS.concat([NET_PAY_COLUMN]);
-      const TXN_SOURCE_MATCH = "paystub";
       const KEY_PAYROLL_ACCOUNT = "incomeRegisterPayrollAccountId";
       const KEY_NET_PAY_CATEGORY = "incomeRegisterNetPayCategoryId";
       const SESSION = { base: "", token: "" };
@@ -604,25 +603,31 @@
 
       function buildTxnFilter() {
         const out = [];
-        out.push('source ~ "' + TXN_SOURCE_MATCH.replaceAll('"', '\\"') + '"');
         const from = $("#fltFrom").value;
         const to = $("#fltTo").value;
-        const payeeRaw = String($("#fltPayee").value || "").trim().toLowerCase();
         if (from) out.push('date >= "' + normalizeDateToNoonUtc(from) + '"');
         if (to) out.push('date <= "' + normalizeDateToNoonUtc(to) + '"');
-
-        if (payeeRaw) {
-          const ids = state.payees
-            .filter((p) => String((p && p.name) || "").toLowerCase().includes(payeeRaw))
-            .map((p) => String((p && p.id) || ""))
-            .filter(Boolean);
-          if (!ids.length) {
-            out.push('payee = "__no_payee_name_match__"');
-          } else {
-            out.push("(" + ids.map((id) => 'payee = "' + id.replaceAll('"', '\\"') + '"').join(" || ") + ")");
-          }
-        }
         return out.join(" && ");
+      }
+
+      function buildNetPayEntriesFilter() {
+        const netPayCategoryId = activeNetPayCategoryId();
+        if (!netPayCategoryId) return 'txn = "__missing_net_pay_category__"';
+        const base = ['category = "' + netPayCategoryId.replaceAll('"', '\\"') + '"'];
+        const dateFilter = buildTxnFilter();
+        if (dateFilter) base.push(dateFilter);
+        return base.join(" && ");
+      }
+
+      function payeeFilterQuery() {
+        return String($("#fltPayee").value || "").trim().toLowerCase();
+      }
+
+      function txnMatchesPayeeFilter(txn, query) {
+        const q = String(query || "").trim().toLowerCase();
+        if (!q) return true;
+        const payeeName = String(payeeDisplayName(txn && txn.payee) || "").toLowerCase();
+        return payeeName.includes(q);
       }
 
       async function ensureAccountsLoaded(ids) {
@@ -820,19 +825,67 @@
 
         const escaped = txnIds.map((id) => 'txn = "' + id.replaceAll('"', '\\"') + '"');
         const chunkSize = 20;
+        const missingAccountIds = new Set();
+        const missingCategoryIds = new Set();
         for (let i = 0; i < escaped.length; i += chunkSize) {
           const chunkFilter = escaped.slice(i, i + chunkSize).join(" || ");
           const rows = await listRecordsSafe("entries", { filter: "(" + chunkFilter + ")", sort: "date", perPage: 500 });
-          await ensureAccountsLoaded(rows.map((r) => r && r.account));
-          await ensureCategoriesLoaded(rows.map((r) => r && r.category));
           rows.forEach((row) => {
             const txnId = String((row && row.txn) || "");
             if (!txnId) return;
             if (!state.entriesByTxnId.has(txnId)) state.entriesByTxnId.set(txnId, []);
             state.entriesByTxnId.get(txnId).push(row);
             if (row && row.id) state.entriesById.set(String(row.id), row);
+            const accountId = String((row && row.account) || "");
+            const categoryId = String((row && row.category) || "");
+            if (accountId && !state.accountById.has(accountId)) missingAccountIds.add(accountId);
+            if (categoryId && !state.categoryById.has(categoryId)) missingCategoryIds.add(categoryId);
           });
         }
+        if (missingAccountIds.size) await ensureAccountsLoaded(Array.from(missingAccountIds));
+        if (missingCategoryIds.size) await ensureCategoriesLoaded(Array.from(missingCategoryIds));
+      }
+
+      async function listTxnsByIds(txnIds) {
+        const ids = Array.from(new Set((txnIds || []).map((id) => String(id || "")).filter(Boolean)));
+        if (!ids.length) return [];
+        const out = [];
+        const chunkSize = 50;
+        for (let i = 0; i < ids.length; i += chunkSize) {
+          const chunk = ids.slice(i, i + chunkSize);
+          const filter = "(" + chunk.map((id) => 'id = "' + id.replaceAll('"', '\\"') + '"').join(" || ") + ")";
+          const rows = await listRecordsSafe("txns", { filter: filter, perPage: 500, sort: "date" });
+          out.push(...rows);
+        }
+        const seen = new Set();
+        return out.filter((t) => {
+          const id = String((t && t.id) || "");
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+      }
+
+      function txnSortValueForPagination(txn, netPayEntryByTxnId) {
+        const col = state.sort.column;
+        if (col === "payee") return payeeDisplayName(txn && txn.payee);
+        if (col === "account") {
+          const txnId = String((txn && txn.id) || "");
+          const netEntry = netPayEntryByTxnId.get(txnId) || null;
+          return accountLabel(netEntry ? getAccountById(netEntry.account) : null);
+        }
+        return fmtDate(txn && txn.date);
+      }
+
+      function sortTxnsForPagination(txns, netPayEntryByTxnId) {
+        const direction = state.sort.direction;
+        return (txns || []).slice().sort((a, b) => {
+          const va = txnSortValueForPagination(a, netPayEntryByTxnId);
+          const vb = txnSortValueForPagination(b, netPayEntryByTxnId);
+          const cmp = compareValues(va, vb, direction);
+          if (cmp !== 0) return cmp;
+          return compareValues(String((a && a.id) || ""), String((b && b.id) || ""), "asc");
+        });
       }
 
       function qtyDisplayForEntry(entry) {
@@ -874,29 +927,34 @@
       async function loadRegister() {
         validateColumnCategories();
 
-        const allTxns = await listRecordsSafe("txns", {
-          filter: buildTxnFilter(),
-          sort: serverSortExpr(),
+        const netPayRows = await listRecordsSafe("entries", {
+          filter: buildNetPayEntriesFilter(),
+          sort: "date",
           perPage: 500
         });
 
-        await ensurePayeesLoaded(allTxns.map((t) => t && t.payee));
-        await loadEntriesForTxnIds(allTxns.map((t) => String((t && t.id) || "")).filter(Boolean));
-
-        const netPayCatId = activeNetPayCategoryId();
-        const filteredTxns = allTxns.filter((txn) => {
-          const txnId = String((txn && txn.id) || "");
-          const rows = state.entriesByTxnId.get(txnId) || [];
-          return rows.some((e) => String((e && e.category) || "") === netPayCatId);
+        const netPayEntryByTxnId = new Map();
+        netPayRows.forEach((row) => {
+          const txnId = String((row && row.txn) || "");
+          if (!txnId || netPayEntryByTxnId.has(txnId)) return;
+          netPayEntryByTxnId.set(txnId, row);
         });
+        const candidateTxnIds = Array.from(netPayEntryByTxnId.keys());
+        const candidateTxns = await listTxnsByIds(candidateTxnIds);
+        await ensurePayeesLoaded(candidateTxns.map((t) => t && t.payee));
 
-        state.totalItems = filteredTxns.length;
-        state.totalPages = Math.max(1, Math.ceil(filteredTxns.length / state.perPage));
+        const payeeQ = payeeFilterQuery();
+        const payeeFiltered = candidateTxns.filter((txn) => txnMatchesPayeeFilter(txn, payeeQ));
+        const sorted = sortTxnsForPagination(payeeFiltered, netPayEntryByTxnId);
+
+        state.totalItems = sorted.length;
+        state.totalPages = Math.max(1, Math.ceil(sorted.length / state.perPage));
         if (state.page > state.totalPages) state.page = state.totalPages;
         const start = (state.page - 1) * state.perPage;
         const end = start + state.perPage;
-        state.txns = filteredTxns.slice(start, end);
+        state.txns = sorted.slice(start, end);
         state.txnById = new Map(state.txns.map((t) => [String(t.id), t]));
+        await loadEntriesForTxnIds(state.txns.map((t) => String((t && t.id) || "")).filter(Boolean));
 
         updatePageInfo();
         renderRegister();
@@ -952,8 +1010,7 @@
             ? netPayEntryFromModel(model)
             : (model.byColumn.get(toKey(col)) || null);
           const qty = qtyDisplayForEntry(e);
-          const acc = e ? accountLabel(getAccountById(e.account)) : "";
-          tds.push('<td class="amountCell"><div class="amt">' + escapeHtml(qty) + '</div><div class="subacct">' + escapeHtml(acc) + "</div></td>");
+          tds.push('<td class="amountCell"><div class="amt">' + escapeHtml(qty) + "</div></td>");
         }
 
         tr.innerHTML = tds.join("");
@@ -994,13 +1051,9 @@
 
         for (const col of PAYSTUB_COLUMNS) {
           const v = draft.values[col] == null ? "" : String(draft.values[col]);
-          const defaultAcc = col === NET_PAY_COLUMN
-            ? accountLabel(getAccountById(draft.netPayAccountId))
-            : accountLabel(getAccountById(activePayrollAccountId()));
           tds.push(
             '<td class="amountCell">' +
               '<input class="inputMini" data-edit-col="' + escapeHtml(col) + '" type="text" value="' + escapeHtml(v) + '" placeholder="" />' +
-              '<div class="subacct">' + escapeHtml(defaultAcc) + "</div>" +
             "</td>"
           );
         }
@@ -1305,8 +1358,7 @@
           const txnDate = normalizeDateToNoonUtc(localTodayYmd());
 
           const txn = await createRecord("txns", {
-            date: txnDate,
-            source: "manual:paystub"
+            date: txnDate
           });
           createdTxnId = String(txn && txn.id || "");
           if (!createdTxnId) throw new Error("No txn id returned by PocketBase.");
